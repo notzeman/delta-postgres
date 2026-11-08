@@ -1,0 +1,908 @@
+import fs from "fs";
+import path from "path";
+import { pipeline } from "stream/promises";
+import { z } from "zod";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { config } from "./config";
+import {
+  pool,
+  getProjects,
+  getProject,
+  getProjectBySlug,
+  getArchives,
+  getJobs,
+  getJob,
+  getSettings,
+  setSetting,
+  audit,
+  getIgnoredProjects,
+  type Project,
+} from "./db";
+import {
+  verifyCredentials,
+  signSession,
+  setSessionCookie,
+  clearSessionCookie,
+  currentUser,
+  getActor,
+  checkLoginRate,
+  resetLoginRate,
+} from "./auth";
+import {
+  listAllContainers,
+  isPostgresImage,
+  getContainer,
+  dockerVersion,
+  containerDatabases,
+  postgresVersion,
+} from "./docker";
+import { discoverProjects, inspectForManualAdd } from "./discovery";
+import {
+  borgVersion,
+  repoSizeBytes,
+  listArchiveFiles,
+  deleteArchive,
+  checkArchive,
+  exportArchiveStream,
+  exportRepoStream,
+  exportAllStream,
+  importArchiveFromFile,
+  restoreDatabase,
+} from "./borg";
+import {
+  createJob,
+  enqueueProject,
+  enqueueAll,
+  cancelJob,
+  readJobLog,
+  runningJobCount,
+  syncProjectArchives,
+} from "./jobs";
+import {
+  computeNextRun,
+  globalCron,
+  recomputeProjectSchedule,
+  recomputeAllSchedules,
+} from "./scheduler";
+import { runCommand, slugify, formatBytes, ensureDir, rmrf } from "./utils";
+
+function sendError(reply: FastifyReply, code: number, message: string) {
+  return reply.code(code).send({ error: message });
+}
+
+function projectId(request: FastifyRequest): number {
+  const value = Number((request.params as any).id);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function archiveName(request: FastifyRequest): string {
+  return decodeURIComponent((request.params as any).name);
+}
+
+async function requireProject(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<Project | null> {
+  const project = await getProject(projectId(request));
+  if (!project) {
+    sendError(reply, 404, "Project not found");
+    return null;
+  }
+  return project;
+}
+
+function safeDbFile(db: string): string {
+  return `databases/${db.replace(/[^a-zA-Z0-9_.-]/g, "_")}.dump`;
+}
+
+export async function registerApi(app: FastifyInstance): Promise<void> {
+  // ---------- Auth ----------
+  app.post("/api/auth/login", async (request, reply) => {
+    const ip = request.ip;
+    if (!checkLoginRate(ip)) {
+      return sendError(reply, 429, "Too many login attempts. Try again in a minute.");
+    }
+    const body = z
+      .object({ username: z.string().min(1), password: z.string().min(1) })
+      .safeParse(request.body);
+    if (!body.success) return sendError(reply, 400, "Username and password are required");
+    const ok = await verifyCredentials(body.data.username, body.data.password);
+    if (!ok) {
+      audit("anonymous", "login.failed", body.data.username).catch(() => {});
+      return sendError(reply, 401, "Invalid credentials");
+    }
+    resetLoginRate(ip);
+    const token = signSession(body.data.username);
+    setSessionCookie(reply, token);
+    await audit(body.data.username, "login.success", body.data.username);
+    return { user: { username: body.data.username } };
+  });
+
+  app.post("/api/auth/logout", async (request, reply) => {
+    clearSessionCookie(reply);
+    await audit(getActor(request), "logout");
+    return { ok: true };
+  });
+
+  app.get("/api/auth/me", async (request) => {
+    const user = currentUser(request);
+    return { user };
+  });
+
+  // ---------- Health ----------
+  app.get("/api/health", async () => {
+    const checks: Record<string, unknown> = {
+      time: new Date().toISOString(),
+      appVersion: config.appVersion,
+      timezone: config.timezone,
+      worker: { running: runningJobCount(), concurrency: config.concurrency },
+    };
+    try {
+      await pool.query("SELECT 1");
+      checks.database = { ok: true };
+    } catch (error) {
+      checks.database = { ok: false, error: String(error) };
+    }
+    try {
+      checks.docker = { ok: true, ...(await dockerVersion()) };
+    } catch (error) {
+      checks.docker = { ok: false, error: String(error) };
+    }
+    try {
+      checks.borg = { ok: true, version: await borgVersion() };
+    } catch (error) {
+      checks.borg = { ok: false, error: String(error) };
+    }
+    try {
+      const stat: any = (fs as any).statfsSync(config.backupRoot);
+      const total = Number(stat.blocks) * Number(stat.bsize);
+      const free = Number(stat.bavail) * Number(stat.bsize);
+      checks.disk = {
+        ok: free > 1024 * 1024 * 1024,
+        total,
+        free,
+        usedPct: total ? Math.round(((total - free) / total) * 100) : 0,
+      };
+    } catch (error) {
+      checks.disk = { ok: false, error: String(error) };
+    }
+    return checks;
+  });
+
+  // ---------- Stats ----------
+  app.get("/api/stats", async () => {
+    const projects = await getProjects();
+    const jobs = await getJobs(12);
+    const totals = await pool.query<{
+      archives: string;
+      original: string;
+      deduplicated: string;
+      compressed: string;
+    }>(
+      `SELECT count(*)::text AS archives,
+              COALESCE(sum(original_size), 0)::text AS original,
+              COALESCE(sum(deduplicated_size), 0)::text AS deduplicated,
+              COALESCE(sum(size_bytes), 0)::text AS compressed
+       FROM archives`,
+    );
+    let repoBytes = 0;
+    for (const project of projects) repoBytes += repoSizeBytes(project);
+    const lastSuccess = await pool.query<{ at: string | null }>(
+      `SELECT max(finished_at) AS at FROM backup_jobs WHERE status = 'success'`,
+    );
+    const last24 = await pool.query<{ status: string; count: string }>(
+      `SELECT status, count(*)::text AS count FROM backup_jobs
+       WHERE created_at > now() - interval '24 hours' GROUP BY status`,
+    );
+    const series = await pool.query(
+      `SELECT a.name, a.created_at, a.original_size, a.deduplicated_size, p.name AS project
+       FROM archives a JOIN projects p ON p.id = a.project_id
+       ORDER BY a.created_at DESC NULLS LAST LIMIT 30`,
+    );
+    return {
+      projects: {
+        total: projects.length,
+        enabled: projects.filter((p) => p.enabled).length,
+        failing: projects.filter((p) => p.last_status === "failed").length,
+      },
+      repoBytes,
+      archives: Number(totals.rows[0]?.archives || 0),
+      originalBytes: Number(totals.rows[0]?.original || 0),
+      deduplicatedBytes: Number(totals.rows[0]?.deduplicated || 0),
+      compressedBytes: Number(totals.rows[0]?.compressed || 0),
+      lastSuccessAt: lastSuccess.rows[0]?.at || null,
+      last24: Object.fromEntries(last24.rows.map((r) => [r.status, Number(r.count)])),
+      recentJobs: jobs,
+      storageSeries: series.rows.reverse(),
+    };
+  });
+
+  // ---------- Discovery ----------
+  app.get("/api/discovery", async () => {
+    const projects = await discoverProjects();
+    const managed = await getProjects();
+    const managedSlugs = new Set(managed.map((p) => p.slug));
+    return {
+      projects: projects.map((p) => ({
+        ...p,
+        canAdd: !p.managedProjectId && !p.ignored,
+        alreadyManaged: p.managedProjectId
+          ? true
+          : managedSlugs.has(slugify(p.name)),
+      })),
+    };
+  });
+
+  app.post("/api/discovery/ignore", async (request, reply) => {
+    const body = z
+      .object({ composeProject: z.string().min(1), ignore: z.boolean() })
+      .safeParse(request.body);
+    if (!body.success) return sendError(reply, 400, "composeProject and ignore are required");
+    if (body.data.ignore) {
+      await pool.query(
+        `INSERT INTO ignored_projects(compose_project) VALUES($1) ON CONFLICT DO NOTHING`,
+        [body.data.composeProject],
+      );
+    } else {
+      await pool.query(`DELETE FROM ignored_projects WHERE compose_project = $1`, [
+        body.data.composeProject,
+      ]);
+    }
+    await audit(getActor(request), body.data.ignore ? "discovery.ignore" : "discovery.unignore", body.data.composeProject);
+    return { ok: true };
+  });
+
+  app.get("/api/containers", async () => {
+    const containers = await listAllContainers();
+    return {
+      containers: containers
+        .filter((c) => c.labels["backup.ignore"] !== "true")
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          image: c.image,
+          state: c.state,
+          composeProject: c.composeProject,
+          composeService: c.composeService,
+          isPostgres: isPostgresImage(c.image),
+          pgUser: c.env.POSTGRES_USER || "postgres",
+          pgDefaultDb: c.env.POSTGRES_DB || null,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  });
+
+  app.post("/api/projects/inspect", async (request, reply) => {
+    const body = z
+      .object({ container: z.string().min(1) })
+      .safeParse(request.body);
+    if (!body.success) return sendError(reply, 400, "Container is required");
+    try {
+      const info = await inspectForManualAdd(body.data.container);
+      return {
+        container: {
+          id: info.container.id,
+          name: info.container.name,
+          image: info.container.image,
+          state: info.container.state,
+          composeProject: info.container.composeProject,
+        },
+        isPostgres: info.isPostgres,
+        pgUser: info.pgUser,
+        pgDefaultDb: info.pgDefaultDb,
+        databases: info.databases,
+        pgVersion: info.pgVersion,
+        error: info.error,
+      };
+    } catch (error) {
+      return sendError(reply, 404, error instanceof Error ? error.message : "Container not found");
+    }
+  });
+
+  // ---------- Projects ----------
+  app.get("/api/projects", async () => {
+    const projects = await getProjects();
+    const containers = await listAllContainers().catch(() => []);
+    const byId = new Map(containers.map((c) => [c.id, c]));
+    const byName = new Map(containers.map((c) => [c.name, c]));
+    const result = [];
+    for (const project of projects) {
+      const container =
+        (project.container_id ? byId.get(project.container_id) : undefined) ||
+        (project.container_name ? byName.get(project.container_name) : undefined);
+      const archives = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM archives WHERE project_id = $1`,
+        [project.id],
+      );
+      const lastJob = await pool.query(
+        `SELECT id, status, trigger, started_at, finished_at, error, size_bytes
+         FROM backup_jobs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [project.id],
+      );
+      result.push({
+        ...project,
+        repoBytes: repoSizeBytes(project),
+        archiveCount: Number(archives.rows[0]?.count || 0),
+        containerState: container?.state || "missing",
+        containerImage: container?.image || project.container_image,
+        lastJob: lastJob.rows[0] || null,
+      });
+    }
+    return { projects: result };
+  });
+
+  app.post("/api/projects", async (request, reply) => {
+    const schema = z.object({
+      name: z.string().min(1).max(120),
+      containerId: z.string().optional(),
+      containerName: z.string().optional(),
+      pgUser: z.string().optional(),
+      pgDefaultDb: z.string().nullable().optional(),
+      databases: z.array(z.string()).nullable().optional(),
+      scheduleCron: z.string().nullable().optional(),
+      keepDaily: z.number().int().min(0).nullable().optional(),
+      keepWeekly: z.number().int().min(0).nullable().optional(),
+      keepMonthly: z.number().int().min(0).nullable().optional(),
+      compression: z.string().optional(),
+      notes: z.string().nullable().optional(),
+      force: z.boolean().optional(),
+      source: z.string().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
+    const body = parsed.data;
+    const ref = body.containerId || body.containerName;
+    if (!ref) return sendError(reply, 400, "A container is required");
+
+    let info;
+    try {
+      info = await inspectForManualAdd(ref);
+    } catch (error) {
+      return sendError(reply, 404, error instanceof Error ? error.message : "Container not found");
+    }
+    if (!info.isPostgres && !body.force) {
+      return sendError(
+        reply,
+        400,
+        "Container does not look like a PostgreSQL container. Use force=true to add it anyway.",
+      );
+    }
+    const pgUser = body.pgUser || info.pgUser;
+    const cron = body.scheduleCron || (await globalCron());
+    if (computeNextRun(cron) === null) return sendError(reply, 400, "Invalid cron expression");
+
+    let slug = slugify(body.name);
+    const existing = await getProjectBySlug(slug);
+    if (existing) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+
+    const { rows } = await pool.query<Project>(
+      `INSERT INTO projects(name, slug, source, enabled, container_id, container_name,
+        container_image, compose_project, pg_user, pg_default_db, databases,
+        schedule_cron, keep_daily, keep_weekly, keep_monthly, compression, notes, next_run_at)
+       VALUES($1,$2,$3,true,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       RETURNING *`,
+      [
+        body.name,
+        slug,
+        body.source || "manual",
+        info.container.id,
+        info.container.name,
+        info.container.image,
+        info.container.composeProject,
+        pgUser,
+        body.pgDefaultDb ?? info.pgDefaultDb,
+        body.databases ? JSON.stringify(body.databases) : null,
+        body.scheduleCron ?? null,
+        body.keepDaily ?? null,
+        body.keepWeekly ?? null,
+        body.keepMonthly ?? null,
+        body.compression || "auto,zstd,3",
+        body.notes ?? null,
+        computeNextRun(cron),
+      ],
+    );
+    await audit(getActor(request), "project.create", rows[0].slug, {
+      container: info.container.name,
+    });
+    return reply.code(201).send({ project: rows[0] });
+  });
+
+  app.get("/api/projects/:id", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const archives = await getArchives(project.id);
+    const jobs = await pool.query(
+      `SELECT * FROM backup_jobs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 30`,
+      [project.id],
+    );
+    let container: any = null;
+    let liveDatabases: Array<{ name: string; sizeBytes: number }> = [];
+    let version = "";
+    try {
+      container = await getContainer(project.container_id || project.container_name || "");
+      if (container.state === "running") {
+        liveDatabases = await containerDatabases(container.id, project.pg_user);
+        version = await postgresVersion(container.id, project.pg_user);
+      }
+    } catch {
+      /* container may be missing */
+    }
+    return {
+      project: { ...project, repoBytes: repoSizeBytes(project) },
+      archives,
+      jobs: jobs.rows,
+      container: container
+        ? {
+            id: container.id,
+            name: container.name,
+            image: container.image,
+            state: container.state,
+            composeProject: container.composeProject,
+            databases: liveDatabases,
+            pgVersion: version,
+          }
+        : null,
+    };
+  });
+
+  app.patch("/api/projects/:id", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const schema = z.object({
+      name: z.string().min(1).max(120).optional(),
+      enabled: z.boolean().optional(),
+      pgUser: z.string().optional(),
+      pgDefaultDb: z.string().nullable().optional(),
+      databases: z.array(z.string()).nullable().optional(),
+      scheduleCron: z.string().nullable().optional(),
+      keepDaily: z.number().int().min(0).nullable().optional(),
+      keepWeekly: z.number().int().min(0).nullable().optional(),
+      keepMonthly: z.number().int().min(0).nullable().optional(),
+      compression: z.string().optional(),
+      notes: z.string().nullable().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
+    const body = parsed.data;
+    if (body.scheduleCron && computeNextRun(body.scheduleCron) === null) {
+      return sendError(reply, 400, "Invalid cron expression");
+    }
+    const nextRun = body.scheduleCron
+      ? computeNextRun(body.scheduleCron)
+      : body.scheduleCron === null
+        ? computeNextRun(await globalCron())
+        : project.next_run_at;
+
+    const { rows } = await pool.query<Project>(
+      `UPDATE projects SET
+        name = $1, enabled = $2, pg_user = $3, pg_default_db = $4,
+        databases = $5, schedule_cron = $6, keep_daily = $7, keep_weekly = $8,
+        keep_monthly = $9, compression = $10, notes = $11, next_run_at = $12,
+        updated_at = now()
+       WHERE id = $13 RETURNING *`,
+      [
+        body.name ?? project.name,
+        body.enabled ?? project.enabled,
+        body.pgUser ?? project.pg_user,
+        body.pgDefaultDb === undefined ? project.pg_default_db : body.pgDefaultDb,
+        body.databases === undefined
+          ? project.databases
+            ? JSON.stringify(project.databases)
+            : null
+          : body.databases
+            ? JSON.stringify(body.databases)
+            : null,
+        body.scheduleCron === undefined ? project.schedule_cron : body.scheduleCron,
+        body.keepDaily === undefined ? project.keep_daily : body.keepDaily,
+        body.keepWeekly === undefined ? project.keep_weekly : body.keepWeekly,
+        body.keepMonthly === undefined ? project.keep_monthly : body.keepMonthly,
+        body.compression ?? project.compression,
+        body.notes === undefined ? project.notes : body.notes,
+        nextRun,
+        project.id,
+      ],
+    );
+    await audit(getActor(request), "project.update", project.slug, body);
+    return { project: rows[0] };
+  });
+
+  app.delete("/api/projects/:id", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
+    await audit(getActor(request), "project.delete", project.slug);
+    return { ok: true, note: "Borg repository files were kept on disk." };
+  });
+
+  // ---------- Backups ----------
+  app.post("/api/projects/:id/backup", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    if (!project.enabled) return sendError(reply, 400, "Project is disabled");
+    const job = await createJob(project.id, "manual");
+    await audit(getActor(request), "backup.manual", project.slug, { job: job.id });
+    return reply.code(202).send({ job });
+  });
+
+  app.post("/api/backups", async (request) => {
+    const jobs = await enqueueAll("manual");
+    await audit(getActor(request), "backup.manual.all", undefined, { jobs: jobs.length });
+    return { jobs };
+  });
+
+  app.get("/api/jobs", async (request) => {
+    const query = request.query as any;
+    const limit = Math.min(Number(query.limit || 100), 500);
+    return { jobs: await getJobs(limit) };
+  });
+
+  app.get("/api/jobs/:id", async (request, reply) => {
+    const job = await getJob(Number((request.params as any).id));
+    if (!job) return sendError(reply, 404, "Job not found");
+    return { job, log: readJobLog(job.id) };
+  });
+
+  app.get("/api/jobs/:id/log", async (request, reply) => {
+    const job = await getJob(Number((request.params as any).id));
+    if (!job) return sendError(reply, 404, "Job not found");
+    return { log: readJobLog(job.id) };
+  });
+
+  app.post("/api/jobs/:id/cancel", async (request, reply) => {
+    const id = Number((request.params as any).id);
+    const job = await getJob(id);
+    if (!job) return sendError(reply, 404, "Job not found");
+    cancelJob(id);
+    await audit(getActor(request), "job.cancel", String(id));
+    return { ok: true };
+  });
+
+  // ---------- Archives ----------
+  app.get("/api/projects/:id/archives", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const query = request.query as any;
+    if (query.sync === "1") {
+      try {
+        await syncProjectArchives(project);
+      } catch (error) {
+        return sendError(reply, 500, error instanceof Error ? error.message : "Sync failed");
+      }
+    }
+    return { archives: await getArchives(project.id) };
+  });
+
+  app.post("/api/projects/:id/archives/sync", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    try {
+      await syncProjectArchives(project);
+      return { archives: await getArchives(project.id) };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "Sync failed");
+    }
+  });
+
+  app.get("/api/projects/:id/archives/:name/files", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    try {
+      return { files: await listArchiveFiles(project, archiveName(request)) };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "Unable to list archive");
+    }
+  });
+
+  app.delete("/api/projects/:id/archives/:name", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const name = archiveName(request);
+    try {
+      await deleteArchive(project, name);
+      await pool.query(`DELETE FROM archives WHERE project_id = $1 AND name = $2`, [
+        project.id,
+        name,
+      ]);
+      await audit(getActor(request), "archive.delete", `${project.slug}/${name}`);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "Delete failed");
+    }
+  });
+
+  app.post("/api/projects/:id/archives/:name/verify", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const name = archiveName(request);
+    const lines: string[] = [];
+    try {
+      await checkArchive(project, name, (line) => lines.push(line));
+      await pool.query(
+        `UPDATE archives SET verified_at = now() WHERE project_id = $1 AND name = $2`,
+        [project.id, name],
+      );
+      await audit(getActor(request), "archive.verify", `${project.slug}/${name}`);
+      return { ok: true, output: lines.join("\n") };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "Verify failed");
+    }
+  });
+
+  app.post("/api/projects/:id/restore", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const body = z
+      .object({
+        archive: z.string().min(1),
+        database: z.string().min(1),
+        targetDatabase: z.string().regex(/^[a-zA-Z0-9_]+$/, "Use letters, numbers, and underscores"),
+        overwrite: z.boolean().optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) return sendError(reply, 400, body.error.issues[0]?.message || "Invalid body");
+    if (!project.container_id && !project.container_name) {
+      return sendError(reply, 400, "Project has no container");
+    }
+    const lines: string[] = [];
+    try {
+      await restoreDatabase(
+        project,
+        project.container_id || project.container_name!,
+        body.data.archive,
+        safeDbFile(body.data.database),
+        body.data.targetDatabase,
+        Boolean(body.data.overwrite),
+        (line) => lines.push(line),
+      );
+      await audit(getActor(request), "archive.restore", `${project.slug}/${body.data.archive}`, {
+        targetDatabase: body.data.targetDatabase,
+        overwrite: body.data.overwrite,
+      });
+      return { ok: true, output: lines.join("\n") };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "Restore failed");
+    }
+  });
+
+  app.get("/api/projects/:id/archives/:name/export", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const name = archiveName(request);
+    const child = exportArchiveStream(project, name);
+    reply.header("Content-Type", "application/x-tar");
+    reply.header(
+      "Content-Disposition",
+      `attachment; filename="${project.slug}-${name}.tar"`,
+    );
+    child.stderr.on("data", (c: Buffer) => app.log.warn(c.toString()));
+    child.on("error", () => {
+      if (!reply.sent) reply.code(500).send({ error: "Export failed" });
+    });
+    return reply.send(child.stdout);
+  });
+
+  app.get("/api/projects/:id/export", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const root = path.join(config.backupRoot, project.slug);
+    if (!fs.existsSync(root)) return sendError(reply, 404, "No repository on disk for this project");
+    const child = exportRepoStream(project);
+    reply.header("Content-Type", "application/x-tar");
+    reply.header("Content-Disposition", `attachment; filename="${project.slug}-borg-repo.tar"`);
+    child.stderr.on("data", (c: Buffer) => app.log.warn(c.toString()));
+    return reply.send(child.stdout);
+  });
+
+  // ---------- Export / import ----------
+  app.get("/api/export/catalog", async (request, reply) => {
+    const projects = await getProjects();
+    const archives = await pool.query(
+      `SELECT project_id, name, created_at, original_size, deduplicated_size, size_bytes, file_count
+       FROM archives ORDER BY created_at DESC`,
+    );
+    const catalog = {
+      format: "delta-postgres-catalog-v1",
+      exportedAt: new Date().toISOString(),
+      appVersion: config.appVersion,
+      projects: projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        source: p.source,
+        enabled: p.enabled,
+        container: p.container_name,
+        image: p.container_image,
+        composeProject: p.compose_project,
+        pgUser: p.pg_user,
+        databases: p.databases,
+        scheduleCron: p.schedule_cron,
+        retention: {
+          daily: p.keep_daily,
+          weekly: p.keep_weekly,
+          monthly: p.keep_monthly,
+        },
+        compression: p.compression,
+        notes: p.notes,
+      })),
+      archives: archives.rows,
+    };
+    reply.header("Content-Type", "application/json");
+    reply.header("Content-Disposition", "attachment; filename=\"delta-postgres-catalog.json\"");
+    await audit(getActor(request), "export.catalog");
+    return catalog;
+  });
+
+  app.get("/api/export/all", async (request, reply) => {
+    // Keep a small catalog alongside the repositories.
+    try {
+      const projects = await getProjects();
+      fs.writeFileSync(
+        path.join(config.backupRoot, "_catalog.json"),
+        JSON.stringify(
+          {
+            format: "delta-postgres-catalog-v1",
+            exportedAt: new Date().toISOString(),
+            projects: projects.map((p) => ({
+              name: p.name,
+              slug: p.slug,
+              container: p.container_name,
+              image: p.container_image,
+              pgUser: p.pg_user,
+              databases: p.databases,
+              scheduleCron: p.schedule_cron,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+    } catch {
+      /* best effort */
+    }
+    const child = exportAllStream();
+    reply.header("Content-Type", "application/x-tar");
+    reply.header("Content-Disposition", "attachment; filename=\"delta-postgres-all-repos.tar\"");
+    child.stderr.on("data", (c: Buffer) => app.log.warn(c.toString()));
+    await audit(getActor(request), "export.all");
+    return reply.send(child.stdout);
+  });
+
+  app.post("/api/import", async (request, reply) => {
+    const data = await request.file();
+    if (!data) return sendError(reply, 400, "A tar file is required");
+    const fields = data.fields as Record<string, any>;
+    const fieldValue = (name: string): string | undefined => {
+      const field = fields?.[name];
+      if (!field) return undefined;
+      if (Array.isArray(field)) return field[0]?.value;
+      return field.value;
+    };
+    const projectIdValue = fieldValue("projectId");
+    const mode = fieldValue("mode") || "archive";
+    const archiveNameValue = fieldValue("archiveName");
+    const parsedProjectId = Number(projectIdValue);
+    if (!projectIdValue || !Number.isFinite(parsedProjectId)) {
+      data.file.resume();
+      return sendError(reply, 400, "A valid projectId is required");
+    }
+    const project = await getProject(parsedProjectId);
+    if (!project) {
+      // Drain and discard the upload on validation failure.
+      data.file.resume();
+      return sendError(reply, 400, "A valid projectId is required");
+    }
+    if (mode === "archive" && !archiveNameValue) {
+      data.file.resume();
+      return sendError(reply, 400, "archiveName is required for archive import");
+    }
+
+    ensureDir(config.stagingRoot);
+    const tempFile = path.join(
+      config.stagingRoot,
+      `import-${Date.now()}-${(data.filename || "upload.tar").replace(/[^a-zA-Z0-9_.-]/g, "_")}`,
+    );
+    try {
+      await pipeline(data.file, fs.createWriteStream(tempFile));
+      const lines: string[] = [];
+      const log = (line: string) => lines.push(line);
+
+      if (mode === "archive") {
+        await importArchiveFromFile(project, archiveNameValue!, tempFile, log);
+        await syncProjectArchives(project);
+      } else {
+        const tempDir = path.join(config.stagingRoot, `extract-${Date.now()}`);
+        ensureDir(tempDir);
+        const list = await runCommand("tar", ["-tf", tempFile], { maxBuffer: 32 * 1024 * 1024 });
+        if (list.code !== 0) throw new Error(list.stderr || "Invalid tar archive");
+        const entries = list.stdout.split("\n").filter(Boolean);
+        if (entries.some((e) => e.startsWith("/") || e.split("/").includes(".."))) {
+          throw new Error("Refusing to import an archive with unsafe paths");
+        }
+        const extract = await runCommand("tar", ["-xf", tempFile, "-C", tempDir, "--no-same-owner"]);
+        if (extract.code !== 0) throw new Error(extract.stderr || "Extraction failed");
+
+        const candidates = [
+          path.join(tempDir, project.slug, "repo"),
+          path.join(tempDir, "repo"),
+          path.join(tempDir, "config") ? tempDir : "",
+        ];
+        let sourceRepo = candidates.find((p) => p && fs.existsSync(path.join(p, "config")));
+        if (!sourceRepo) {
+          const first = fs.readdirSync(tempDir)[0];
+          if (first) {
+            const nested = path.join(tempDir, first, "repo");
+            if (fs.existsSync(path.join(nested, "config"))) sourceRepo = nested;
+          }
+        }
+        if (!sourceRepo) throw new Error("Uploaded archive does not contain a Borg repository");
+        const targetDir = path.join(config.backupRoot, project.slug);
+        ensureDir(targetDir);
+        rmrf(path.join(targetDir, "repo"));
+        // Clear per-project Borg cache/security metadata; the imported repository may
+        // have been copied from another location or project.
+        rmrf(path.join(config.dataDir, "borg", project.slug));
+        fs.cpSync(sourceRepo, path.join(targetDir, "repo"), { recursive: true });
+        rmrf(tempDir);
+        await syncProjectArchives(project);
+      }
+      await audit(getActor(request), "import", project.slug, { mode, archive: archiveNameValue });
+      return { ok: true, output: lines.join("\n") };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "Import failed");
+    } finally {
+      try {
+        fs.rmSync(tempFile, { force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  // ---------- Settings ----------
+  app.get("/api/settings", async () => {
+    const stored = await getSettings();
+    return {
+      settings: {
+        globalCron: stored.globalCron ?? config.defaultCron,
+        keepDaily: stored.keepDaily ?? config.keepDaily,
+        keepWeekly: stored.keepWeekly ?? config.keepWeekly,
+        keepMonthly: stored.keepMonthly ?? config.keepMonthly,
+        notificationWebhook: stored.notificationWebhook ?? "",
+        timezone: config.timezone,
+        concurrency: config.concurrency,
+        appVersion: config.appVersion,
+        borgVersion: await borgVersion(),
+        dockerSocket: config.dockerSocket,
+        backupRoot: config.backupRoot,
+      },
+    };
+  });
+
+  app.patch("/api/settings", async (request, reply) => {
+    const schema = z.object({
+      globalCron: z.string().optional(),
+      keepDaily: z.number().int().min(0).optional(),
+      keepWeekly: z.number().int().min(0).optional(),
+      keepMonthly: z.number().int().min(0).optional(),
+      notificationWebhook: z.string().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
+    if (parsed.data.globalCron && computeNextRun(parsed.data.globalCron) === null) {
+      return sendError(reply, 400, "Invalid cron expression");
+    }
+    for (const [key, value] of Object.entries(parsed.data)) {
+      if (value !== undefined) await setSetting(key, value);
+    }
+    if (parsed.data.globalCron) await recomputeAllSchedules();
+    await audit(getActor(request), "settings.update", undefined, parsed.data);
+    return { ok: true };
+  });
+
+  app.get("/api/audit", async () => {
+    const { rows } = await pool.query(
+      `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100`,
+    );
+    return { audit: rows };
+  });
+}

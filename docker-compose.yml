@@ -1,0 +1,68 @@
+services:
+  dashboard-db:
+    image: postgres:17-alpine
+    container_name: delta-postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: ${DASHBOARD_DB_PASSWORD:-change-me-db-password}
+      POSTGRES_DB: backup_dashboard
+      TZ: ${TZ:-Asia/Kolkata}
+    volumes:
+      - dashboard-db-data:/var/lib/postgresql/data
+    labels:
+      # Keep the dashboard's own metadata database out of auto-discovery.
+      backup.ignore: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard -d backup_dashboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: delta-postgres
+    restart: unless-stopped
+    depends_on:
+      dashboard-db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://dashboard:${DASHBOARD_DB_PASSWORD:-change-me-db-password}@dashboard-db:5432/backup_dashboard
+      DATA_DIR: /data
+      BACKUP_ROOT: /backups
+      PORT: "8080"
+      TZ: ${TZ:-Asia/Kolkata}
+    ports:
+      - "${DASHBOARD_PORT:-8095}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backups:/backups
+      - ./data:/data
+    # The entrypoint creates the runtime UID/GID, joins the Docker group, and
+    # drops privileges with gosu. Set APP_UID/APP_GID to the owner of the bind mounts.
+    group_add:
+      - "${DOCKER_GID:-988}"
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  dashboard-db-data:

@@ -1,0 +1,165 @@
+export interface Project {
+  id: number;
+  name: string;
+  slug: string;
+  source: string;
+  enabled: boolean;
+  container_id: string | null;
+  container_name: string | null;
+  container_image: string | null;
+  compose_project: string | null;
+  pg_user: string;
+  pg_default_db: string | null;
+  databases: string[] | null;
+  schedule_cron: string | null;
+  keep_daily: number | null;
+  keep_weekly: number | null;
+  keep_monthly: number | null;
+  compression: string;
+  notes: string | null;
+  last_backup_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  next_run_at: string | null;
+  repoBytes?: number;
+  archiveCount?: number;
+  containerState?: string;
+  containerImage?: string;
+  lastJob?: Job | null;
+}
+
+export interface Archive {
+  id: number;
+  project_id: number;
+  job_id: number | null;
+  name: string;
+  created_at: string | null;
+  size_bytes: number | null;
+  original_size: number | null;
+  deduplicated_size: number | null;
+  file_count: number | null;
+  verified_at: string | null;
+}
+
+export interface Job {
+  id: number;
+  project_id: number;
+  project_name?: string;
+  project_slug?: string;
+  trigger: string;
+  status: string;
+  archive_name: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  size_bytes: number | null;
+  error: string | null;
+  created_at: string;
+}
+
+export interface DiscoveredContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  composeProject: string | null;
+  composeService: string | null;
+  workingDir: string | null;
+  pgUser: string;
+  pgDefaultDb: string | null;
+  databases: Array<{ name: string; sizeBytes: number }>;
+  pgVersion: string;
+  error?: string;
+}
+
+export interface DiscoveredProject {
+  key: string;
+  name: string;
+  composeProject: string | null;
+  workingDir: string | null;
+  status: string;
+  containers: DiscoveredContainer[];
+  databases: string[];
+  sizeBytes: number;
+  pgVersion: string;
+  managedProjectId: number | null;
+  ignored: boolean;
+  canAdd: boolean;
+  alreadyManaged: boolean;
+  error?: string;
+}
+
+export interface ContainerOption {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  composeProject: string | null;
+  composeService: string | null;
+  isPostgres: boolean;
+  pgUser: string;
+  pgDefaultDb: string | null;
+}
+
+export interface Health {
+  time: string;
+  appVersion: string;
+  timezone: string;
+  worker: { running: number; concurrency: number };
+  database: { ok: boolean; error?: string };
+  docker: { ok: boolean; version?: string; apiVersion?: string; error?: string };
+  borg: { ok: boolean; version?: string; error?: string };
+  disk: { ok: boolean; total?: number; free?: number; usedPct?: number; error?: string };
+}
+
+export interface Stats {
+  projects: { total: number; enabled: number; failing: number };
+  repoBytes: number;
+  archives: number;
+  originalBytes: number;
+  deduplicatedBytes: number;
+  compressedBytes: number;
+  lastSuccessAt: string | null;
+  last24: Record<string, number>;
+  recentJobs: Job[];
+  storageSeries: Array<{
+    name: string;
+    created_at: string;
+    original_size: number | null;
+    deduplicated_size: number | null;
+    project: string;
+  }>;
+}
+
+export interface Settings {
+  globalCron: string;
+  keepDaily: number;
+  keepWeekly: number;
+  keepMonthly: number;
+  notificationWebhook: string;
+  timezone: string;
+  concurrency: number;
+  appVersion: string;
+  borgVersion: string;
+  dockerSocket: string;
+  backupRoot: string;
+}
+
+export interface ProjectDetailResponse {
+  project: Project;
+  archives: Archive[];
+  jobs: Job[];
+  container: {
+    id: string;
+    name: string;
+    image: string;
+    state: string;
+    composeProject: string | null;
+    databases: Array<{ name: string; sizeBytes: number }>;
+    pgVersion: string;
+  } | null;
+}
+
+export interface JobDetailResponse {
+  job: Job;
+  log: string;
+}

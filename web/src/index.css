@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-slate-200 antialiased;
+  background-image:
+    radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.09), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(99, 102, 241, 0.08), transparent 55%),
+    linear-gradient(180deg, #080b12 0%, #080b12 100%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.28);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #28354d transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #28354d;
+  border-radius: 999px;
+}
+
+@layer components {
+  .glass {
+    @apply border border-white/5 bg-ink-900/70 backdrop-blur-xl;
+  }
+
+  .hairline {
+    @apply border-b border-white/5;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-white/10 bg-ink-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-accent-500/60 focus:ring-2 focus:ring-accent-500/10;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent-500 text-ink-950 hover:bg-accent-400 shadow-glow;
+  }
+
+  .btn-secondary {
+    @apply btn border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10;
+  }
+
+  .btn-danger {
+    @apply btn border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20;
+  }
+
+  .btn-ghost {
+    @apply btn text-slate-400 hover:bg-white/5 hover:text-slate-200;
+  }
+
+  .card {
+    @apply rounded-2xl border border-white/5 bg-ink-900/70 shadow-xl shadow-black/20 backdrop-blur-xl;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.live-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #151d2e 25%, #1d273b 37%, #151d2e 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
