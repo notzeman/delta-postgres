@@ -45,6 +45,7 @@ import CronField from "../components/CronField";
 import Picker from "../components/Picker";
 import Tooltip from "../components/Tooltip";
 import ConfirmModal from "../components/ConfirmModal";
+import UnsavedChangesGuard from "../components/UnsavedChangesGuard";
 import JobLogModal from "../components/JobLogModal";
 
 function DetailStat({
@@ -101,9 +102,11 @@ export default function ProjectDetail() {
     notes: "",
   });
 
+  const [savedSettings, setSavedSettings] = useState<typeof form | null>(null);
+
   useEffect(() => {
     if (!project) return;
-    setForm({
+    const next = {
       name: project.name,
       enabled: project.enabled,
       pgUser: project.pg_user,
@@ -114,8 +117,13 @@ export default function ProjectDetail() {
       keepMonthly: project.keep_monthly === null ? "" : String(project.keep_monthly),
       compression: project.compression,
       notes: project.notes || "",
-    });
+    };
+    setForm(next);
+    setSavedSettings(next);
   }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const settingsDirty =
+    savedSettings !== null && JSON.stringify(form) !== JSON.stringify(savedSettings);
 
   const backupNow = useMutation({
     mutationFn: () => api(`/projects/${projectId}/backup`, { method: "POST" }),
@@ -185,6 +193,7 @@ export default function ProjectDetail() {
         }),
       }),
     onSuccess: () => {
+      setSavedSettings(form);
       setNotice("Project settings saved.");
       setError("");
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
@@ -197,6 +206,7 @@ export default function ProjectDetail() {
     mutationFn: () => api(`/projects/${projectId}`, { method: "DELETE" }),
     onSuccess: () => {
       setConfirmIgnore(false);
+      setSavedSettings(form);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["discovery"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
@@ -1201,6 +1211,14 @@ export default function ProjectDetail() {
           </div>
         </Card>
       ) : null}
+
+      <UnsavedChangesGuard
+        dirty={settingsDirty}
+        onSave={async () => {
+          await saveSettings.mutateAsync();
+          setSavedSettings(form);
+        }}
+      />
 
       <ConfirmModal
         open={Boolean(archiveToDelete)}

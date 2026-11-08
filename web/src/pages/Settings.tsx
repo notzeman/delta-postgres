@@ -29,6 +29,7 @@ import {
 import CronField from "../components/CronField";
 import Pagination from "../components/Pagination";
 import Picker from "../components/Picker";
+import UnsavedChangesGuard from "../components/UnsavedChangesGuard";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
@@ -87,13 +88,14 @@ export default function Settings() {
     timezone: "Asia/Kolkata",
     concurrency: "1",
   });
+  const [savedForm, setSavedForm] = useState<typeof form | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!settingsQuery.data?.settings) return;
     const settings = settingsQuery.data.settings;
-    setForm({
+    const next = {
       globalCron: settings.globalCron,
       keepDaily: String(settings.keepDaily),
       keepWeekly: String(settings.keepWeekly),
@@ -102,8 +104,12 @@ export default function Settings() {
       autoAddProjects: settings.autoAddProjects !== false,
       timezone: settings.timezone || "Asia/Kolkata",
       concurrency: String(settings.concurrency || 1),
-    });
+    };
+    setForm(next);
+    setSavedForm(next);
   }, [settingsQuery.data?.settings]);
+
+  const isDirty = savedForm !== null && JSON.stringify(form) !== JSON.stringify(savedForm);
 
   const save = useMutation({
     mutationFn: () =>
@@ -121,6 +127,7 @@ export default function Settings() {
         }),
       }),
     onSuccess: () => {
+      setSavedForm(form);
       setNotice("Global settings saved. Project schedules using the global cron were recalculated.");
       setError("");
       queryClient.invalidateQueries({ queryKey: ["settings"] });
@@ -378,6 +385,14 @@ export default function Settings() {
           />
         ) : null}
       </Card>
+
+      <UnsavedChangesGuard
+        dirty={isDirty}
+        onSave={async () => {
+          await save.mutateAsync();
+          setSavedForm(form);
+        }}
+      />
     </div>
   );
 }

@@ -29,6 +29,7 @@ PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
 - **Import/export** — project-level transfer tab plus global archive/repo/catalog exports.
 - **Light & dark mode** — topbar theme switcher with persisted preference.
 - **Polished controls** — searchable React dropdowns, custom checkboxes/switches, and animated tooltips.
+- **Unsaved-changes guard** — leaving Settings or project settings with pending edits prompts to save, discard, or cancel.
 - **Self-healing container lookup** — backup and restore re-resolve the project container by name/compose labels, and a **Refresh container** button repairs stale IDs.
 - **Live operations** — job history, persisted logs, health checks for Docker/Borg/DB/disk.
 - **Postgres metadata** — the dashboard's own state lives in a dedicated PostgreSQL 17 container.
