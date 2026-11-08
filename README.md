@@ -29,6 +29,7 @@ PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
 - **Import/export** — project-level transfer tab plus global archive/repo/catalog exports.
 - **Light & dark mode** — topbar theme switcher with persisted preference.
 - **Polished controls** — searchable React dropdowns, custom checkboxes/switches, and animated tooltips.
+- **Self-healing container lookup** — backup and restore re-resolve the project container by name/compose labels, and a **Refresh container** button repairs stale IDs.
 - **Live operations** — job history, persisted logs, health checks for Docker/Borg/DB/disk.
 - **Postgres metadata** — the dashboard's own state lives in a dedicated PostgreSQL 17 container.
 - **Database-backed admin users** — bcrypt-hashed credentials created with an interactive CLI command, httpOnly JWT cookie, rate limiting, audit log.
@@ -395,6 +396,9 @@ docker compose exec dashboard npm run reset-admin
 
 **`permission denied` on `/var/run/docker.sock`**
 The entrypoint auto-detects the socket GID. If you use a custom Docker socket or rootless Docker, set `DOCKER_GID` explicitly and recreate the container.
+
+**`no such container` after recreating a Compose service**
+Container IDs change when a container is recreated; names and Compose labels stay stable. Backup and restore automatically re-resolve by container name, then compose project/service, and save the new ID. Open the project and use **Refresh container** to repair it manually; the restore error state also offers a refresh button.
 
 **`pg_dump: error: connection ... role ... does not exist`**
 Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is present in the container.

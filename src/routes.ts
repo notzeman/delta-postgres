@@ -32,13 +32,13 @@ import {
 import {
   listAllContainers,
   isPostgresImage,
-  getContainer,
   dockerVersion,
   containerDatabases,
   postgresVersion,
 } from "./docker";
 import { discoverProjects, inspectForManualAdd, composeProjectSummary } from "./discovery";
 import { autoImportDiscoveredProjects } from "./autoDiscover";
+import { resolveProjectContainer } from "./containerResolver";
 import {
   listServers,
   getServer,
@@ -834,12 +834,14 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     let container: any = null;
     let liveDatabases: Array<{ name: string; sizeBytes: number }> = [];
     let version = "";
+    let resolvedProject = project;
     const server = await getServer(project.server_id);
     try {
-      container = await getContainer(
-        project.container_id || project.container_name || "",
-        server,
-      );
+      const result = await resolveProjectContainer(project, server!);
+      container = result.container;
+      if (result.changed) {
+        resolvedProject = (await getProject(project.id)) || project;
+      }
       if (container.state === "running") {
         liveDatabases = await containerDatabases(container.id, project.pg_user, server);
         version = await postgresVersion(container.id, project.pg_user, server);
@@ -848,7 +850,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       /* container may be missing */
     }
     return {
-      project: { ...project, repoBytes: repoSizeBytes(project) },
+      project: { ...resolvedProject, repoBytes: repoSizeBytes(resolvedProject) },
       server: server ? toPublicServer(server) : null,
       archives,
       jobs: jobs.rows,
@@ -977,6 +979,41 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       ok: true,
       note: "Project moved to Ignored. Its archives, jobs, and Borg repository were kept.",
     };
+  });
+
+  app.post("/api/projects/:id/refresh-container", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const server = await getServer(project.server_id);
+    if (!server) return sendError(reply, 404, "Docker server not found");
+    try {
+      const result = await resolveProjectContainer(project, server);
+      await audit(getActor(request), "project.refresh_container", project.slug, {
+        previous: result.previous,
+        current: { id: result.container.id, name: result.container.name },
+        changed: result.changed,
+      });
+      const updated = await getProject(project.id);
+      return {
+        ok: true,
+        changed: result.changed,
+        previous: result.previous,
+        container: {
+          id: result.container.id,
+          name: result.container.name,
+          image: result.container.image,
+          state: result.container.state,
+          composeProject: result.container.composeProject,
+        },
+        project: updated,
+      };
+    } catch (error) {
+      return sendError(
+        reply,
+        404,
+        error instanceof Error ? error.message : "No matching container found",
+      );
+    }
   });
 
   // ---------- Backups ----------
@@ -1113,17 +1150,23 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       })
       .safeParse(request.body);
     if (!body.success) return sendError(reply, 400, body.error.issues[0]?.message || "Invalid body");
-    if (!project.container_id && !project.container_name) {
-      return sendError(reply, 400, "Project has no container");
-    }
     const server = await getServer(project.server_id);
     if (!server) return sendError(reply, 404, "Docker server not found");
     const lines: string[] = [];
     try {
+      const { container, changed, previous } = await resolveProjectContainer(project, server);
+      if (changed) {
+        lines.push(
+          `Re-linked container: ${previous.name || previous.id || "unknown"} -> ${container.name} (${container.id.slice(0, 12)})`,
+        );
+      }
+      if (container.state !== "running") {
+        return sendError(reply, 409, `Container ${container.name} is not running`);
+      }
       await restoreDatabase(
         project,
         server,
-        project.container_id || project.container_name!,
+        container.id,
         body.data.archive,
         safeDbFile(body.data.database),
         body.data.targetDatabase,
@@ -1133,10 +1176,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       await audit(getActor(request), "archive.restore", `${project.slug}/${body.data.archive}`, {
         targetDatabase: body.data.targetDatabase,
         overwrite: body.data.overwrite,
+        container: container.name,
       });
       return { ok: true, output: lines.join("\n") };
     } catch (error) {
-      return sendError(reply, 500, error instanceof Error ? error.message : "Restore failed");
+      const message = error instanceof Error ? error.message : "Restore failed";
+      const status = /No matching PostgreSQL container|not found|no such container/i.test(message)
+        ? 404
+        : 500;
+      return sendError(reply, status, message);
     }
   });
 

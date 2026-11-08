@@ -289,6 +289,29 @@ export default function ProjectDetail() {
     },
   });
 
+  const refreshContainer = useMutation({
+    mutationFn: () =>
+      api<{
+        changed: boolean;
+        previous: { id: string | null; name: string | null };
+        container: { id: string; name: string; image: string; state: string };
+      }>(`/projects/${projectId}/refresh-container`, { method: "POST" }),
+    onSuccess: (data) => {
+      setError("");
+      setNotice(
+        data.changed
+          ? `Container re-linked to ${data.container.name} (${data.container.id.slice(0, 12)})`
+          : `Container is up to date: ${data.container.name}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+    onError: (err) => {
+      setNotice("");
+      setError(err instanceof Error ? err.message : "Unable to refresh container");
+    },
+  });
+
   useEffect(() => {
     if (!restore.archive && archives[0]) {
       setRestore((current) => ({ ...current, archive: archives[0].name }));
@@ -392,7 +415,19 @@ export default function ProjectDetail() {
       {tab === "overview" ? (
         <div className="grid gap-6 xl:grid-cols-3">
           <Card className="xl:col-span-2">
-            <CardHeader title="Project posture" subtitle="Live container and backup state" />
+            <CardHeader
+              title="Project posture"
+              subtitle="Live container and backup state"
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => refreshContainer.mutate()}
+                  loading={refreshContainer.isPending}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Refresh container
+                </Button>
+              }
+            />
             <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
               <DetailStat
                 label="Container"
@@ -880,10 +915,23 @@ export default function ProjectDetail() {
                   />
                 </Field>
               ) : null}
-              {restoreError ? <ErrorBox message={restoreError} /> : null}
+              {restoreError ? (
+                <div className="space-y-2">
+                  <ErrorBox message={restoreError} />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => refreshContainer.mutate()}
+                    loading={refreshContainer.isPending}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" /> Refresh container and retry
+                  </Button>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[11px] text-slate-500">
-                  Restores into the same PostgreSQL container.
+                  Restores into the project&apos;s current PostgreSQL container. The container is
+                  re-resolved automatically.
                 </p>
                 <Button
                   type="submit"

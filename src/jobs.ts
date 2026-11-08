@@ -10,11 +10,11 @@ import {
   type Project,
 } from "./db";
 import {
-  getContainer,
   containerDatabases,
   postgresVersion,
   execToFile,
 } from "./docker";
+import { resolveProjectContainer } from "./containerResolver";
 import {
   createArchive,
   pruneArchive,
@@ -162,8 +162,6 @@ async function notifyWebhook(
 
 async function executeBackup(job: BackupJob, project: Project): Promise<void> {
   const log = (line: string) => appendLog(job.id, line);
-  const containerRef = project.container_id || project.container_name;
-  if (!containerRef) throw new Error("No container configured for this project");
 
   try {
     const stat: any = (fs as any).statfsSync(config.backupRoot);
@@ -178,7 +176,12 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
 
   const server = await getServer(project.server_id);
   if (!server) throw new Error("Docker server not found for this project");
-  const container = await getContainer(containerRef, server);
+  const { container, changed, previous } = await resolveProjectContainer(project, server);
+  if (changed) {
+    log(
+      `Re-linked container: ${previous.name || previous.id || "unknown"} -> ${container.name} (${container.id.slice(0, 12)})`,
+    );
+  }
   if (container.state !== "running") {
     throw new Error(`Container ${container.name} is not running (state: ${container.state})`);
   }
