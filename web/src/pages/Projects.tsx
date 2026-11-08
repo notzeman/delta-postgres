@@ -11,11 +11,15 @@ import {
   Server,
   ShieldQuestion,
   Sparkles,
+  Trash2,
+  Undo2,
 } from "lucide-react";
 import { api, formatBytes, fmtDate, timeAgo } from "../api";
 import type {
   ContainerOption,
   DiscoveredProject,
+  DiscoveryResponse,
+  DockerServer,
   Project,
 } from "../types";
 import {
@@ -38,6 +42,7 @@ import CronField from "../components/CronField";
 
 interface AddPayload {
   name: string;
+  serverId: number;
   containerId?: string;
   containerName?: string;
   pgUser?: string;
@@ -50,20 +55,29 @@ interface AddPayload {
   force?: boolean;
 }
 
+function discoveryIgnoreKey(project: DiscoveredProject): string {
+  return project.composeProject || project.containers[0]?.name || project.key;
+}
+
 function AddProjectModal({
   open,
   onClose,
-  containers,
+  servers,
+  defaultServerId,
   prefill,
 }: {
   open: boolean;
   onClose: () => void;
-  containers: ContainerOption[];
+  servers: DockerServer[];
+  defaultServerId?: number;
   prefill?: DiscoveredProject | null;
 }) {
   const queryClient = useQueryClient();
   const initialContainer =
     prefill?.containers?.find((c) => c.state === "running") || prefill?.containers?.[0];
+  const [serverId, setServerId] = useState<number>(
+    prefill?.serverId || defaultServerId || servers[0]?.id || 0,
+  );
   const [name, setName] = useState(prefill?.name || "");
   const [containerName, setContainerName] = useState(initialContainer?.name || "");
   const [pgUser, setPgUser] = useState(initialContainer?.pgUser || "");
@@ -77,6 +91,14 @@ function AddProjectModal({
   const [notes, setNotes] = useState("");
   const [force, setForce] = useState(false);
   const [error, setError] = useState("");
+
+  const containersQuery = useQuery({
+    queryKey: ["containers", serverId],
+    queryFn: () =>
+      api<{ containers: ContainerOption[] }>(`/containers?serverId=${serverId}`),
+    enabled: serverId > 0,
+  });
+  const containers = containersQuery.data?.containers || [];
 
   const [inspect, setInspect] = useState<{
     isPostgres: boolean;
@@ -98,7 +120,7 @@ function AddProjectModal({
         container: { state: string };
       }>("/projects/inspect", {
         method: "POST",
-        body: JSON.stringify({ container }),
+        body: JSON.stringify({ container, serverId }),
       }),
     onSuccess: (data) => {
       setInspect({
@@ -125,6 +147,7 @@ function AddProjectModal({
     if (prefill) {
       const container =
         prefill.containers.find((c) => c.state === "running") || prefill.containers[0];
+      setServerId(prefill.serverId);
       setName(prefill.name);
       setContainerName(container?.name || "");
       setPgUser(container?.pgUser || "");
@@ -133,6 +156,16 @@ function AddProjectModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prefill]);
+
+  const onServerChange = (value: string) => {
+    const id = Number(value);
+    setServerId(id);
+    setContainerName("");
+    setInspect(null);
+    setDatabases([]);
+    setError("");
+    if (!prefill || prefill.serverId !== id) setName("");
+  };
 
   const onContainerChange = (value: string) => {
     setContainerName(value);
@@ -168,6 +201,7 @@ function AddProjectModal({
     const option = containers.find((c) => c.name === containerName);
     create.mutate({
       name,
+      serverId,
       containerName,
       containerId: option?.id,
       pgUser: pgUser || undefined,
@@ -193,7 +227,7 @@ function AddProjectModal({
       wide
     >
       <form onSubmit={submit} className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Project name">
             <Input
               value={name}
@@ -202,7 +236,22 @@ function AddProjectModal({
               required
             />
           </Field>
-          <Field label="Docker container" hint="Detected from the Docker Engine API">
+          <Field label="Docker server" hint={prefill ? "Detected project server" : "Scope this project"}>
+            <Select
+              value={serverId}
+              onChange={(event) => onServerChange(event.target.value)}
+              disabled={Boolean(prefill)}
+              required
+            >
+              <option value="">Select a server…</option>
+              {servers.map((server) => (
+                <option key={server.id} value={server.id}>
+                  {server.name} ({server.type})
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Docker container" hint="Detected from the selected server">
             <Select value={containerName} onChange={(event) => onContainerChange(event.target.value)} required>
               <option value="">Select a container…</option>
               {containers.map((container) => (
@@ -214,6 +263,11 @@ function AddProjectModal({
             </Select>
           </Field>
         </div>
+        {containersQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Loading containers from server…
+          </div>
+        ) : null}
 
         {inspectMutation.isPending ? (
           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -361,7 +415,7 @@ function AddProjectModal({
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={create.isPending} disabled={!name || !containerName}>
+          <Button type="submit" variant="primary" loading={create.isPending} disabled={!name || !containerName || !serverId}>
             <Plus className="h-4 w-4" /> Add project
           </Button>
         </div>
@@ -372,25 +426,28 @@ function AddProjectModal({
 
 export default function Projects() {
   const queryClient = useQueryClient();
-  const projectsQuery = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api<{ projects: Project[] }>("/projects"),
-    refetchInterval: 20_000,
-  });
-  const discoveryQuery = useQuery({
-    queryKey: ["discovery"],
-    queryFn: () => api<{ projects: DiscoveredProject[] }>("/discovery"),
-    refetchInterval: 60_000,
-  });
-  const containersQuery = useQuery({
-    queryKey: ["containers"],
-    queryFn: () => api<{ containers: ContainerOption[] }>("/containers"),
-    staleTime: 30_000,
-  });
-
+  const [serverFilter, setServerFilter] = useState("all");
   const [tab, setTab] = useState("managed");
   const [addOpen, setAddOpen] = useState(false);
   const [prefill, setPrefill] = useState<DiscoveredProject | null>(null);
+  const [actionError, setActionError] = useState("");
+  const serverQuery = serverFilter === "all" ? "" : `?serverId=${serverFilter}`;
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects", serverFilter],
+    queryFn: () => api<{ projects: Project[] }>(`/projects${serverQuery}`),
+    refetchInterval: 20_000,
+  });
+  const discoveryQuery = useQuery({
+    queryKey: ["discovery", serverFilter],
+    queryFn: () => api<DiscoveryResponse>(`/discovery${serverQuery}`),
+    refetchInterval: 60_000,
+  });
+  const serversQuery = useQuery({
+    queryKey: ["servers"],
+    queryFn: () => api<{ servers: DockerServer[] }>("/servers"),
+    staleTime: 30_000,
+  });
 
   const backupOne = useMutation({
     mutationFn: (id: number) => api(`/projects/${id}/backup`, { method: "POST" }),
@@ -402,14 +459,40 @@ export default function Projects() {
   });
 
   const ignoreMutation = useMutation({
-    mutationFn: (payload: { composeProject: string; ignore: boolean }) =>
+    mutationFn: (payload: { serverId: number; composeProject: string; ignore: boolean }) =>
       api("/discovery/ignore", { method: "POST", body: JSON.stringify(payload) }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["discovery"] }),
+    onSuccess: () => {
+      setActionError("");
+      queryClient.invalidateQueries({ queryKey: ["discovery"] });
+    },
+    onError: (err) => setActionError(err instanceof Error ? err.message : "Ignore action failed"),
+  });
+
+  const removeProject = useMutation({
+    mutationFn: (id: number) => api(`/projects/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      setActionError("");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["discovery"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (err) => setActionError(err instanceof Error ? err.message : "Remove failed"),
   });
 
   const projects = projectsQuery.data?.projects || [];
   const discovered = discoveryQuery.data?.projects || [];
-  const containers = containersQuery.data?.containers || [];
+  const servers = serversQuery.data?.servers || [];
+  const summary = discoveryQuery.data?.summary || { total: 0, withPostgres: 0 };
+  const autoAdd = discoveryQuery.data?.autoAddProjects !== false;
+  const ignoredProjects = useMemo(
+    () => discovered.filter((project) => project.ignored),
+    [discovered],
+  );
+  const otherCompose = useMemo(
+    () => (discoveryQuery.data?.composeProjects || []).filter((project) => !project.hasPostgres),
+    [discoveryQuery.data?.composeProjects],
+  );
   const detectable = useMemo(
     () => discovered.filter((project) => !project.ignored && !project.alreadyManaged),
     [discovered],
@@ -431,11 +514,24 @@ export default function Projects() {
             Containers & schedules
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Auto-detected PostgreSQL compose projects, plus manual additions for anything the Docker
-            scan misses.
+            Every Docker Compose project is scanned. PostgreSQL projects are added automatically;
+            others are shown below for visibility. Remove a project to ignore it from future scans.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={serverFilter}
+            onChange={(event) => setServerFilter(event.target.value)}
+            className="w-52"
+            title="Filter projects by Docker server"
+          >
+            <option value="all">All servers</option>
+            {servers.map((server) => (
+              <option key={server.id} value={server.id}>
+                {server.name}
+              </option>
+            ))}
+          </Select>
           <Button
             onClick={() => {
               queryClient.invalidateQueries({ queryKey: ["discovery"] });
@@ -451,10 +547,13 @@ export default function Projects() {
         </div>
       </div>
 
+      {actionError ? <ErrorBox message={actionError} /> : null}
+
       <Tabs
         tabs={[
           { id: "managed", label: "Managed", count: projects.length },
           { id: "detected", label: "Detected", count: detectable.length },
+          { id: "ignored", label: "Ignored", count: ignoredProjects.length },
         ]}
         active={tab}
         onChange={setTab}
@@ -519,10 +618,12 @@ export default function Projects() {
                     <Server className="h-3 w-3" />
                     {project.containerState || "unknown"}
                   </Badge>
+                  <Badge tone="blue">{project.server_name || "local"}</Badge>
                   <Badge tone="neutral">
                     <Sparkles className="h-3 w-3" />
                     {project.schedule_cron || "global schedule"}
                   </Badge>
+                  {project.source === "auto" ? <Badge tone="violet">auto</Badge> : null}
                   {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
                 </div>
 
@@ -547,20 +648,53 @@ export default function Projects() {
                   >
                     Open <ArrowRight className="h-3.5 w-3.5" />
                   </Link>
+                  <button
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Remove ${project.name}? The Borg repository stays on disk, and this compose project will be ignored so auto-discovery does not re-add it.`,
+                        )
+                      ) {
+                        removeProject.mutate(project.id);
+                      }
+                    }}
+                    className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"
+                    title="Remove project and ignore it from future scans"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </Card>
             ))}
           </div>
         )
-      ) : (
+      ) : tab === "detected" ? (
         <div className="space-y-4">
+          <div className="flex flex-col justify-between gap-3 rounded-xl border border-white/5 bg-ink-900/60 px-4 py-3 sm:flex-row sm:items-center">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <Server className="h-3.5 w-3.5 text-accent-400" />
+              Scanned
+              <span className="font-medium text-slate-200">{summary.total}</span>
+              Docker Compose projects ·
+              <span className="font-medium text-slate-200">{summary.withPostgres}</span>
+              with PostgreSQL
+            </div>
+            <Badge tone={autoAdd ? "green" : "neutral"}>
+              {autoAdd ? "Auto-add on" : "Auto-add off"}
+            </Badge>
+          </div>
+
           {discoveryQuery.isLoading ? <Spinner label="Scanning Docker…" /> : null}
           {detectable.length === 0 ? (
             <Card>
               <EmptyState
                 icon={<ShieldQuestion className="h-8 w-8" />}
-                title="No new projects detected"
-                description="All PostgreSQL containers are already managed, ignored, or unavailable. Use Add project for manual onboarding."
+                title="No unmanaged PostgreSQL projects"
+                description={
+                  autoAdd
+                    ? "Detected PostgreSQL projects are added automatically. New Compose projects are picked up every few minutes and whenever you rescan."
+                    : "Auto-add is disabled. Use Add project to onboard a detected project manually."
+                }
                 action={
                   <Button variant="primary" onClick={() => openAdd()}>
                     <Plus className="h-4 w-4" /> Add manually
@@ -575,6 +709,7 @@ export default function Projects() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-slate-100">{project.name}</h3>
+                      <Badge tone="blue">{project.serverName}</Badge>
                       <StatusBadge status={project.status} />
                       {project.pgVersion ? <Badge tone="blue">PostgreSQL {project.pgVersion}</Badge> : null}
                     </div>
@@ -600,13 +735,93 @@ export default function Projects() {
                       variant="ghost"
                       onClick={() =>
                         ignoreMutation.mutate({
-                          composeProject: project.composeProject || project.key,
+                          serverId: project.serverId,
+                          composeProject: discoveryIgnoreKey(project),
                           ignore: true,
                         })
                       }
                       title="Ignore this project"
                     >
                       <EyeOff className="h-3.5 w-3.5" /> Ignore
+                    </Button>
+                    <Button size="sm" variant="primary" onClick={() => openAdd(project)}>
+                      <Plus className="h-3.5 w-3.5" /> Add
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ))
+          )}
+
+          {otherCompose.length > 0 ? (
+            <Card>
+              <CardHeader
+                title="Other Compose projects"
+                subtitle="Scanned on this host · no PostgreSQL service detected"
+              />
+              <div className="divide-y divide-white/5">
+                {otherCompose.map((project) => (
+                  <div key={project.name} className="flex items-center justify-between gap-3 px-5 py-3">
+                    <div>
+                      <p className="text-xs font-medium text-slate-200">{project.name}</p>
+                      <p className="text-[11px] text-slate-500">
+                        {project.serverName} · {project.containerCount} container
+                        {project.containerCount === 1 ? "" : "s"} · {project.running} running
+                      </p>
+                    </div>
+                    <Badge tone="neutral">no PostgreSQL</Badge>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {ignoredProjects.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={<Undo2 className="h-8 w-8" />}
+                title="No ignored projects"
+                description="Projects you remove are ignored so auto-discovery does not re-add them. They will appear here."
+              />
+            </Card>
+          ) : (
+            ignoredProjects.map((project) => (
+              <Card key={project.key} className="p-5">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-slate-100">{project.name}</h3>
+                      <Badge tone="blue">{project.serverName}</Badge>
+                      <Badge tone="neutral">ignored</Badge>
+                      <StatusBadge status={project.status} />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {project.containers.map((c) => c.name).join(", ")} ·{" "}
+                      {project.workingDir || "compose project"}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {project.databases.map((db) => (
+                        <Badge key={db} tone="neutral">
+                          {db}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        ignoreMutation.mutate({
+                          serverId: project.serverId,
+                          composeProject: discoveryIgnoreKey(project),
+                          ignore: false,
+                        })
+                      }
+                    >
+                      <Undo2 className="h-3.5 w-3.5" /> Unignore
                     </Button>
                     <Button size="sm" variant="primary" onClick={() => openAdd(project)}>
                       <Plus className="h-3.5 w-3.5" /> Add
@@ -627,7 +842,8 @@ export default function Projects() {
             setAddOpen(false);
             setPrefill(null);
           }}
-          containers={containers}
+          servers={servers}
+          defaultServerId={serverFilter !== "all" ? Number(serverFilter) : undefined}
           prefill={prefill}
         />
       ) : null}

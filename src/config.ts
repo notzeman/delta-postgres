@@ -16,6 +16,10 @@ function ensureSecretFile(file: string, bytes = 32): string {
   }
 }
 
+const sessionSecret =
+  process.env.SESSION_SECRET ||
+  ensureSecretFile(path.join(dataDir, "secrets", "session.secret"));
+
 export const config = {
   port: Number(process.env.PORT || 8080),
   host: process.env.HOST || "0.0.0.0",
@@ -24,12 +28,8 @@ export const config = {
   databaseUrl:
     process.env.DATABASE_URL ||
     "postgres://dashboard:dashboard@localhost:5432/backup_dashboard",
-  adminUsername: process.env.ADMIN_USERNAME || "admin",
-  adminPassword: process.env.ADMIN_PASSWORD || "",
-  adminPasswordHash: process.env.ADMIN_PASSWORD_HASH || "",
-  sessionSecret:
-    process.env.SESSION_SECRET ||
-    ensureSecretFile(path.join(dataDir, "secrets", "session.secret")),
+  sessionSecret,
+  secretsKey: process.env.SECRETS_KEY || sessionSecret,
   borgPassphrase:
     process.env.BORG_PASSPHRASE ||
     ensureSecretFile(path.join(dataDir, "secrets", "borg.passphrase")),

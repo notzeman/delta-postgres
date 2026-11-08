@@ -1,8 +1,8 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { config } from "./config";
+import { getUserByUsername } from "./db";
 
 const COOKIE_NAME = "dp_session";
 const JWT_ISSUER = "delta-postgres";
@@ -35,18 +35,9 @@ export async function verifyCredentials(
   username: string,
   password: string,
 ): Promise<boolean> {
-  if (username !== config.adminUsername) return false;
-  if (config.adminPasswordHash) {
-    return bcrypt.compare(password, config.adminPasswordHash);
-  }
-  if (!config.adminPassword) {
-    // Development fallback: admin / admin
-    return username === "admin" && password === "admin";
-  }
-  const a = Buffer.from(password);
-  const b = Buffer.from(config.adminPassword);
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+  const user = await getUserByUsername(username);
+  if (!user) return false;
+  return bcrypt.compare(password, user.password_hash);
 }
 
 export function setSessionCookie(reply: FastifyReply, token: string): void {

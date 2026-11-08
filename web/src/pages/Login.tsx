@@ -75,7 +75,8 @@ export default function Login({ onSuccess }: { onSuccess: () => void }) {
           </div>
         </Card>
         <p className="mt-4 text-center text-[11px] text-slate-600">
-          Credentials are configured with ADMIN_USERNAME / ADMIN_PASSWORD.
+          First run? Create an admin with{" "}
+          <span className="font-mono text-slate-500">docker compose exec dashboard npm run create-admin</span>
         </p>
       </div>
     </div>

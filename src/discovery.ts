@@ -5,7 +5,12 @@ import {
   postgresVersion,
   type ContainerInfo,
 } from "./docker";
-import { getProjects, getIgnoredProjects, type Project } from "./db";
+import {
+  getProjects,
+  getIgnoredProjects,
+  type Project,
+  type ServerRow,
+} from "./db";
 
 export interface DiscoveredContainer {
   id: string;
@@ -25,6 +30,9 @@ export interface DiscoveredContainer {
 export interface DiscoveredProject {
   key: string;
   name: string;
+  serverId: number;
+  serverName: string;
+  serverSlug: string;
   composeProject: string | null;
   workingDir: string | null;
   status: "running" | "partial" | "stopped" | "error";
@@ -35,6 +43,15 @@ export interface DiscoveredProject {
   managedProjectId: number | null;
   ignored: boolean;
   error?: string;
+}
+
+export interface ComposeProjectSummary {
+  name: string;
+  serverId: number;
+  serverName: string;
+  containerCount: number;
+  running: number;
+  hasPostgres: boolean;
 }
 
 const DISCOVERY_IGNORE_LABEL = "backup.ignore";
@@ -55,17 +72,18 @@ function pgDefaultDbFor(container: ContainerInfo, user: string): string | null {
   return container.env.POSTGRES_DB || container.env.PGDATABASE || user;
 }
 
-export async function discoverProjects(): Promise<DiscoveredProject[]> {
+export async function discoverProjects(server: ServerRow): Promise<DiscoveredProject[]> {
   const [containers, projects, ignored] = await Promise.all([
-    listAllContainers(),
+    listAllContainers(server),
     getProjects(),
-    getIgnoredProjects(),
+    getIgnoredProjects(server.id),
   ]);
 
   const ignoredSet = new Set(ignored);
   const managedByContainer = new Map<string, Project>();
   const managedByCompose = new Map<string, Project>();
   for (const project of projects) {
+    if (project.server_id !== server.id) continue;
     if (project.container_id) managedByContainer.set(project.container_id, project);
     if (project.container_name) managedByContainer.set(project.container_name, project);
     if (project.compose_project) managedByCompose.set(project.compose_project, project);
@@ -120,8 +138,8 @@ export async function discoverProjects(): Promise<DiscoveredProject[]> {
       };
       if (container.state === "running") {
         try {
-          detail.databases = await containerDatabases(container.id, user);
-          detail.pgVersion = await postgresVersion(container.id, user);
+          detail.databases = await containerDatabases(container.id, user, server);
+          detail.pgVersion = await postgresVersion(container.id, user, server);
           version = detail.pgVersion || version;
           for (const db of detail.databases) {
             allDbs.add(db.name);
@@ -139,6 +157,7 @@ export async function discoverProjects(): Promise<DiscoveredProject[]> {
     const ignoredFlag =
       ignoredSet.has(key) ||
       (!!composeProject && ignoredSet.has(composeProject)) ||
+      groupContainers.some((c) => ignoredSet.has(c.name)) ||
       groupContainers.every((c) => c.labels[DISCOVERY_IGNORE_LABEL] === "true");
 
     const states = groupContainers.map((c) => c.state);
@@ -154,6 +173,9 @@ export async function discoverProjects(): Promise<DiscoveredProject[]> {
     discovered.push({
       key,
       name: composeProject || key,
+      serverId: server.id,
+      serverName: server.name,
+      serverSlug: server.slug,
       composeProject,
       workingDir: primary.workingDir,
       status,
@@ -170,7 +192,7 @@ export async function discoverProjects(): Promise<DiscoveredProject[]> {
   return discovered.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function inspectForManualAdd(idOrName: string): Promise<{
+export async function inspectForManualAdd(idOrName: string, server: ServerRow): Promise<{
   container: ContainerInfo;
   isPostgres: boolean;
   pgUser: string;
@@ -180,7 +202,7 @@ export async function inspectForManualAdd(idOrName: string): Promise<{
   error?: string;
 }> {
   const { getContainer } = await import("./docker");
-  const container = await getContainer(idOrName);
+  const container = await getContainer(idOrName, server);
   const pgUser = pgUserFor(container);
   const pgDefaultDb = pgDefaultDbFor(container, pgUser);
   const isPostgres = isPostgresImage(container.image);
@@ -189,11 +211,46 @@ export async function inspectForManualAdd(idOrName: string): Promise<{
   let error: string | undefined;
   if (container.state === "running" && isPostgres) {
     try {
-      databases = await containerDatabases(container.id, pgUser);
-      pgVersion = await postgresVersion(container.id, pgUser);
+      databases = await containerDatabases(container.id, pgUser, server);
+      pgVersion = await postgresVersion(container.id, pgUser, server);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
   }
   return { container, isPostgres, pgUser, pgDefaultDb, databases, pgVersion, error };
+}
+
+/**
+ * Summarize every Compose project on a server, including those without PostgreSQL.
+ */
+export async function composeProjectSummary(server: ServerRow): Promise<{
+  projects: ComposeProjectSummary[];
+  total: number;
+  withPostgres: number;
+}> {
+  const containers = await listAllContainers(server);
+  const map = new Map<string, ComposeProjectSummary>();
+  for (const container of containers) {
+    if (!container.composeProject) continue;
+    if (container.labels[DISCOVERY_IGNORE_LABEL] === "true") continue;
+    const entry =
+      map.get(container.composeProject) || {
+        name: container.composeProject,
+        serverId: server.id,
+        serverName: server.name,
+        containerCount: 0,
+        running: 0,
+        hasPostgres: false,
+      };
+    entry.containerCount += 1;
+    if (container.state === "running") entry.running += 1;
+    if (isPostgresImage(container.image)) entry.hasPostgres = true;
+    map.set(container.composeProject, entry);
+  }
+  const projects = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    projects,
+    total: projects.length,
+    withPostgres: projects.filter((project) => project.hasPostgres).length,
+  };
 }

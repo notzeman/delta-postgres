@@ -1,5 +1,11 @@
 export interface Project {
   id: number;
+  server_id: number;
+  server_name?: string;
+  server_slug?: string;
+  server_type?: string;
+  server_host?: string | null;
+  server_port?: number | null;
   name: string;
   slug: string;
   source: string;
@@ -74,6 +80,9 @@ export interface DiscoveredContainer {
 export interface DiscoveredProject {
   key: string;
   name: string;
+  serverId: number;
+  serverName: string;
+  serverSlug: string;
   composeProject: string | null;
   workingDir: string | null;
   status: string;
@@ -100,6 +109,49 @@ export interface ContainerOption {
   pgDefaultDb: string | null;
 }
 
+export interface ComposeProjectSummary {
+  name: string;
+  serverId: number;
+  serverName: string;
+  containerCount: number;
+  running: number;
+  hasPostgres: boolean;
+}
+
+export interface DockerServer {
+  id: number;
+  name: string;
+  slug: string;
+  type: "local" | "tcp";
+  protocol: "socket" | "http" | "https";
+  host: string | null;
+  port: number | null;
+  socket_path: string | null;
+  tls_verify: boolean;
+  enabled: boolean;
+  hasCa?: boolean;
+  hasCert?: boolean;
+  hasKey?: boolean;
+  created_at: string;
+  updated_at: string;
+  status?: {
+    online: boolean;
+    version?: string;
+    apiVersion?: string;
+    error?: string;
+  };
+  projectCount?: number;
+}
+
+export interface DiscoveryResponse {
+  projects: DiscoveredProject[];
+  autoAdded: number;
+  autoAddProjects: boolean;
+  composeProjects: ComposeProjectSummary[];
+  summary: { total: number; withPostgres: number };
+  servers?: DockerServer[];
+}
+
 export interface Health {
   time: string;
   appVersion: string;
@@ -112,6 +164,7 @@ export interface Health {
 }
 
 export interface Stats {
+  serverId?: number | null;
   projects: { total: number; enabled: number; failing: number };
   repoBytes: number;
   archives: number;
@@ -136,6 +189,7 @@ export interface Settings {
   keepWeekly: number;
   keepMonthly: number;
   notificationWebhook: string;
+  autoAddProjects: boolean;
   timezone: string;
   concurrency: number;
   appVersion: string;
@@ -146,6 +200,7 @@ export interface Settings {
 
 export interface ProjectDetailResponse {
   project: Project;
+  server?: DockerServer | null;
   archives: Archive[];
   jobs: Job[];
   container: {

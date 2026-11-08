@@ -5,11 +5,12 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { config, ensureRuntimeDirs } from "./config";
-import { initDb } from "./db";
+import { initDb, countUsers } from "./db";
 import { currentUser } from "./auth";
 import { registerApi } from "./routes";
 import { startJobWorker, stopJobWorker } from "./jobs";
 import { startScheduler, stopScheduler } from "./scheduler";
+import { runAutoDiscovery } from "./autoDiscover";
 import { borgVersion } from "./borg";
 import { dockerVersion } from "./docker";
 
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
   });
 
   await initDb();
+  const userCount = await countUsers();
 
   const version = await borgVersion();
   let docker = "unavailable";
@@ -97,18 +99,31 @@ async function main(): Promise<void> {
       timezone: config.timezone,
       borg: version,
       docker,
-      admin: config.adminUsername,
+      users: userCount,
       defaultCron: config.defaultCron,
       concurrency: config.concurrency,
     },
     "DeltaPostgres starting",
   );
-  if (!config.adminPassword && !config.adminPasswordHash) {
-    app.log.warn("No ADMIN_PASSWORD set. Development fallback is admin/admin — change it!");
+  if (userCount === 0) {
+    app.log.warn(
+      "No admin user configured. Create one with: docker compose exec dashboard npm run create-admin",
+    );
   }
 
   startJobWorker();
   startScheduler();
+
+  let discoveryTimer: NodeJS.Timeout | null = null;
+  const autoDiscover = () => {
+    runAutoDiscovery()
+      .then((added) => {
+        if (added > 0) app.log.info({ added }, "Auto-added newly discovered projects");
+      })
+      .catch((error) => app.log.warn(error, "Auto-discovery failed"));
+  };
+  const discoveryStartup = setTimeout(autoDiscover, 2500);
+  discoveryTimer = setInterval(autoDiscover, 5 * 60_000);
 
   await app.listen({ port: config.port, host: config.host });
 
@@ -116,6 +131,8 @@ async function main(): Promise<void> {
     app.log.info(`Received ${signal}, shutting down`);
     stopScheduler();
     stopJobWorker();
+    if (discoveryTimer) clearInterval(discoveryTimer);
+    clearTimeout(discoveryStartup);
     await app.close();
     process.exit(0);
   };

@@ -8,6 +8,12 @@ export const pool = new Pool({
 
 export interface Project {
   id: number;
+  server_id: number;
+  server_name?: string;
+  server_slug?: string;
+  server_type?: string;
+  server_host?: string | null;
+  server_port?: number | null;
   name: string;
   slug: string;
   source: string;
@@ -62,8 +68,52 @@ export interface Archive {
   verified_at: string | null;
 }
 
-export async function initDb(): Promise<void> {
+export interface User {
+  id: number;
+  username: string;
+  password_hash: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServerRow {
+  id: number;
+  name: string;
+  slug: string;
+  type: "local" | "tcp";
+  protocol: "socket" | "http" | "https";
+  host: string | null;
+  port: number | null;
+  socket_path: string | null;
+  tls_ca: string | null;
+  tls_cert: string | null;
+  tls_key: string | null;
+  tls_verify: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function ensureSchema(): Promise<void> {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS servers (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL DEFAULT 'local',
+      protocol TEXT NOT NULL DEFAULT 'socket',
+      host TEXT,
+      port INTEGER,
+      socket_path TEXT,
+      tls_ca TEXT,
+      tls_cert TEXT,
+      tls_key TEXT,
+      tls_verify BOOLEAN NOT NULL DEFAULT true,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS projects (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
@@ -124,6 +174,14 @@ export async function initDb(): Promise<void> {
       value JSONB NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS audit_log (
       id SERIAL PRIMARY KEY,
       actor TEXT,
@@ -143,6 +201,62 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_archives_project ON archives(project_id, created_at DESC);
   `);
 
+  // Multi-server migration: create the local Docker host and scope existing
+  // projects and ignore decisions to it.
+  await pool.query(
+    `INSERT INTO servers(name, slug, type, protocol, socket_path, enabled)
+     VALUES('Local Docker', 'local', 'local', 'socket', $1, true)
+     ON CONFLICT (slug) DO NOTHING`,
+    [config.dockerSocket],
+  );
+  const local = await pool.query<{ id: number }>(
+    `SELECT id FROM servers WHERE slug = 'local' LIMIT 1`,
+  );
+  const localId = local.rows[0]?.id;
+  if (!localId) throw new Error("Unable to initialize the local Docker server");
+
+  await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS server_id INTEGER REFERENCES servers(id) ON DELETE CASCADE`,
+  );
+  await pool.query(`UPDATE projects SET server_id = $1 WHERE server_id IS NULL`, [
+    localId,
+  ]);
+  await pool.query(`ALTER TABLE projects ALTER COLUMN server_id SET NOT NULL`).catch(
+    () => {},
+  );
+  await pool.query(`ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_slug_key`);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_server_slug ON projects(server_id, slug)`,
+  );
+
+  await pool.query(
+    `ALTER TABLE ignored_projects ADD COLUMN IF NOT EXISTS server_id INTEGER REFERENCES servers(id) ON DELETE CASCADE`,
+  );
+  await pool.query(
+    `UPDATE ignored_projects SET server_id = $1 WHERE server_id IS NULL`,
+    [localId],
+  );
+  await pool.query(
+    `ALTER TABLE ignored_projects ALTER COLUMN server_id SET NOT NULL`,
+  ).catch(() => {});
+  const pk = await pool.query<{ conkey: number[] }>(
+    `SELECT conkey FROM pg_constraint
+     WHERE conrelid = 'ignored_projects'::regclass AND contype = 'p'`,
+  );
+  const keyCount = Array.isArray(pk.rows[0]?.conkey) ? pk.rows[0].conkey.length : 0;
+  if (keyCount !== 2) {
+    await pool.query(
+      `ALTER TABLE ignored_projects DROP CONSTRAINT IF EXISTS ignored_projects_pkey`,
+    );
+    await pool.query(
+      `ALTER TABLE ignored_projects ADD PRIMARY KEY (server_id, compose_project)`,
+    );
+  }
+}
+
+export async function initDb(): Promise<void> {
+  await ensureSchema();
+
   // Mark interrupted jobs from a previous process.
   await pool.query(
     `UPDATE backup_jobs
@@ -153,18 +267,40 @@ export async function initDb(): Promise<void> {
   );
 }
 
-export async function getProjects(): Promise<Project[]> {
-  const { rows } = await pool.query<Project>(`SELECT * FROM projects ORDER BY name ASC`);
+export async function getProjects(serverId?: number): Promise<Project[]> {
+  const { rows } = await pool.query<Project>(
+    `SELECT p.*, s.name AS server_name, s.slug AS server_slug, s.type AS server_type,
+            s.host AS server_host, s.port AS server_port
+     FROM projects p JOIN servers s ON s.id = p.server_id
+     ${serverId ? "WHERE p.server_id = $1" : ""}
+     ORDER BY s.name ASC, p.name ASC`,
+    serverId ? [serverId] : [],
+  );
   return rows;
 }
 
 export async function getProject(id: number): Promise<Project | null> {
-  const { rows } = await pool.query<Project>(`SELECT * FROM projects WHERE id = $1`, [id]);
+  const { rows } = await pool.query<Project>(
+    `SELECT p.*, s.name AS server_name, s.slug AS server_slug, s.type AS server_type,
+            s.host AS server_host, s.port AS server_port
+     FROM projects p JOIN servers s ON s.id = p.server_id
+     WHERE p.id = $1`,
+    [id],
+  );
   return rows[0] || null;
 }
 
-export async function getProjectBySlug(slug: string): Promise<Project | null> {
-  const { rows } = await pool.query<Project>(`SELECT * FROM projects WHERE slug = $1`, [slug]);
+export async function getProjectBySlug(
+  slug: string,
+  serverId: number,
+): Promise<Project | null> {
+  const { rows } = await pool.query<Project>(
+    `SELECT p.*, s.name AS server_name, s.slug AS server_slug, s.type AS server_type,
+            s.host AS server_host, s.port AS server_port
+     FROM projects p JOIN servers s ON s.id = p.server_id
+     WHERE p.slug = $1 AND p.server_id = $2`,
+    [slug, serverId],
+  );
   return rows[0] || null;
 }
 
@@ -223,9 +359,38 @@ export async function audit(
   );
 }
 
-export async function getIgnoredProjects(): Promise<string[]> {
+export async function getIgnoredProjects(serverId: number): Promise<string[]> {
   const { rows } = await pool.query<{ compose_project: string }>(
-    `SELECT compose_project FROM ignored_projects`,
+    `SELECT compose_project FROM ignored_projects WHERE server_id = $1`,
+    [serverId],
   );
   return rows.map((r) => r.compose_project);
+}
+
+export async function getUserByUsername(username: string): Promise<User | null> {
+  const { rows } = await pool.query<User>(
+    `SELECT * FROM users WHERE lower(username) = lower($1)`,
+    [username],
+  );
+  return rows[0] || null;
+}
+
+export async function countUsers(): Promise<number> {
+  const { rows } = await pool.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM users`,
+  );
+  return Number(rows[0]?.count || 0);
+}
+
+export async function saveUser(username: string, passwordHash: string): Promise<User> {
+  const { rows } = await pool.query<User>(
+    `INSERT INTO users(username, password_hash)
+     VALUES($1, $2)
+     ON CONFLICT (username) DO UPDATE SET
+       password_hash = EXCLUDED.password_hash,
+       updated_at = now()
+     RETURNING *`,
+    [username, passwordHash],
+  );
+  return rows[0];
 }

@@ -49,6 +49,7 @@ export default function Settings() {
     keepWeekly: "4",
     keepMonthly: "6",
     notificationWebhook: "",
+    autoAddProjects: true,
   });
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -62,6 +63,7 @@ export default function Settings() {
       keepWeekly: String(settings.keepWeekly),
       keepMonthly: String(settings.keepMonthly),
       notificationWebhook: settings.notificationWebhook || "",
+      autoAddProjects: settings.autoAddProjects !== false,
     });
   }, [settingsQuery.data?.settings]);
 
@@ -75,6 +77,7 @@ export default function Settings() {
           keepWeekly: Number(form.keepWeekly),
           keepMonthly: Number(form.keepMonthly),
           notificationWebhook: form.notificationWebhook,
+          autoAddProjects: form.autoAddProjects,
         }),
       }),
     onSuccess: () => {
@@ -166,6 +169,23 @@ export default function Settings() {
                 placeholder="https://hooks.example.com/…"
               />
             </Field>
+            <label className="flex items-start gap-2 rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.autoAddProjects}
+                onChange={(event) =>
+                  setForm((f) => ({ ...f, autoAddProjects: event.target.checked }))
+                }
+              />
+              <span>
+                <span className="font-medium text-slate-200">Auto-add discovered projects</span>
+                <span className="mt-0.5 block text-[11px] text-slate-500">
+                  Automatically add PostgreSQL projects found through the Docker Compose scan.
+                  Removed projects are ignored and can be restored from the Projects page.
+                </span>
+              </span>
+            </label>
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] text-slate-500">
                 Borg repositories use <span className="font-mono text-slate-400">repokey-blake2</span>{" "}

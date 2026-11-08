@@ -1,11 +1,9 @@
-import Docker from "dockerode";
 import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
-import { Writable, Readable } from "stream";
+import { Writable } from "stream";
+import { dockerClient, type ServerRow } from "./servers";
 import { config } from "./config";
-
-export const docker = new Docker({ socketPath: config.dockerSocket });
 
 export interface ContainerInfo {
   id: string;
@@ -64,7 +62,8 @@ export function normalizeContainerInfo(info: any): ContainerInfo {
   };
 }
 
-export async function listAllContainers(): Promise<ContainerInfo[]> {
+export async function listAllContainers(server?: ServerRow | null): Promise<ContainerInfo[]> {
+  const docker = dockerClient(server);
   const list = await docker.listContainers({ all: true });
   const infos: ContainerInfo[] = [];
   for (const item of list) {
@@ -78,7 +77,11 @@ export async function listAllContainers(): Promise<ContainerInfo[]> {
   return infos;
 }
 
-export async function getContainer(idOrName: string): Promise<ContainerInfo> {
+export async function getContainer(
+  idOrName: string,
+  server?: ServerRow | null,
+): Promise<ContainerInfo> {
+  const docker = dockerClient(server);
   const container = docker.getContainer(idOrName);
   const info = await container.inspect();
   return normalizeContainerInfo(info);
@@ -97,7 +100,9 @@ export async function execCapture(
   containerId: string,
   cmd: string[],
   opts: { env?: string[]; user?: string } = {},
+  server?: ServerRow | null,
 ): Promise<ExecResult> {
+  const docker = dockerClient(server);
   const container = docker.getContainer(containerId);
   const exec = await container.exec({
     Cmd: cmd,
@@ -142,7 +147,9 @@ export async function execToFile(
   destFile: string,
   onLine?: (line: string) => void,
   opts: { env?: string[]; user?: string } = {},
+  server?: ServerRow | null,
 ): Promise<ExecResult> {
+  const docker = dockerClient(server);
   const container = docker.getContainer(containerId);
   const exec = await container.exec({
     Cmd: cmd,
@@ -185,7 +192,9 @@ export async function copyFileToContainer(
   containerId: string,
   hostFile: string,
   destDir = "/tmp",
+  server?: ServerRow | null,
 ): Promise<string> {
+  const docker = dockerClient(server);
   const container = docker.getContainer(containerId);
   const base = path.basename(hostFile);
   const tar = spawn("tar", ["-C", path.dirname(hostFile), "-cf", "-", base], {
@@ -210,16 +219,22 @@ export async function copyFileToContainer(
 export async function containerDatabases(
   containerId: string,
   pgUser: string,
+  server?: ServerRow | null,
 ): Promise<Array<{ name: string; sizeBytes: number }>> {
-  const result = await execCapture(containerId, [
-    "psql",
-    "-U",
-    pgUser,
-    "-d",
-    "postgres",
-    "-Atc",
-    "SELECT datname || '|' || pg_database_size(datname) FROM pg_database WHERE datistemplate=false AND datallowconn=true ORDER BY datname",
-  ]);
+  const result = await execCapture(
+    containerId,
+    [
+      "psql",
+      "-U",
+      pgUser,
+      "-d",
+      "postgres",
+      "-Atc",
+      "SELECT datname || '|' || pg_database_size(datname) FROM pg_database WHERE datistemplate=false AND datallowconn=true ORDER BY datname",
+    ],
+    {},
+    server,
+  );
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.trim() || "Unable to list databases");
   }
@@ -236,21 +251,21 @@ export async function containerDatabases(
 export async function postgresVersion(
   containerId: string,
   pgUser: string,
+  server?: ServerRow | null,
 ): Promise<string> {
-  const result = await execCapture(containerId, [
-    "psql",
-    "-U",
-    pgUser,
-    "-d",
-    "postgres",
-    "-Atc",
-    "SHOW server_version",
-  ]);
+  const result = await execCapture(
+    containerId,
+    ["psql", "-U", pgUser, "-d", "postgres", "-Atc", "SHOW server_version"],
+    {},
+    server,
+  );
   if (result.exitCode !== 0) return "";
   return result.stdout.trim();
 }
 
-export async function dockerVersion(): Promise<{ version: string; apiVersion: string }> {
-  const info = await docker.version();
+export async function dockerVersion(
+  server?: ServerRow | null,
+): Promise<{ version: string; apiVersion: string }> {
+  const info = await dockerClient(server).version();
   return { version: info.Version, apiVersion: info.ApiVersion };
 }

@@ -2,10 +2,7 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import { config } from "./config";
-import {
-  getSettings,
-  type Project,
-} from "./db";
+import { getSettings, type Project, type ServerRow } from "./db";
 import {
   runCommand,
   spawnStream,
@@ -57,8 +54,15 @@ export function borgEnv(project?: Project): NodeJS.ProcessEnv {
   };
 }
 
+export function projectBackupDir(project: Project): string {
+  if (project.server_slug && project.server_slug !== "local") {
+    return path.join(config.backupRoot, "servers", project.server_slug, project.slug);
+  }
+  return path.join(config.backupRoot, project.slug);
+}
+
 export function repoPath(project: Project): string {
-  return path.join(config.backupRoot, project.slug, "repo");
+  return path.join(projectBackupDir(project), "repo");
 }
 
 export async function borgVersion(): Promise<string> {
@@ -309,7 +313,7 @@ export function exportArchiveStream(project: Project, name: string) {
 }
 
 export function exportRepoStream(project: Project) {
-  const root = path.join(config.backupRoot, project.slug);
+  const root = projectBackupDir(project);
   return spawn("tar", ["-cf", "-", "-C", root, "."], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -398,11 +402,12 @@ export async function extractArchiveFile(
 }
 
 export function repoSizeBytes(project: Project): number {
-  return dirSizeBytes(path.join(config.backupRoot, project.slug));
+  return dirSizeBytes(projectBackupDir(project));
 }
 
 export async function restoreDatabase(
   project: Project,
+  server: ServerRow,
   containerId: string,
   archive: string,
   memberPath: string,
@@ -410,7 +415,7 @@ export async function restoreDatabase(
   overwrite: boolean,
   log: LogFn,
 ): Promise<void> {
-  const container = await getContainer(containerId);
+  const container = await getContainer(containerId, server);
   if (container.state !== "running") {
     throw new Error(`Container ${container.name} is not running`);
   }
@@ -423,7 +428,7 @@ export async function restoreDatabase(
     "postgres",
     "-Atc",
     `SELECT 1 FROM pg_database WHERE datname = '${targetDb.replace(/'/g, "''")}'`,
-  ]);
+  ], {}, server);
   const targetExists = exists.stdout.trim() === "1";
 
   if (targetExists && !overwrite) {
@@ -441,7 +446,7 @@ export async function restoreDatabase(
       "postgres",
       "-c",
       `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${targetDb.replace(/'/g, "''")}' AND pid <> pg_backend_pid()`,
-    ]);
+    ], {}, server);
     log(`Dropping database ${targetDb}`);
     const drop = await execCapture(containerId, [
       "psql",
@@ -451,7 +456,7 @@ export async function restoreDatabase(
       "postgres",
       "-c",
       `DROP DATABASE IF EXISTS "${targetDb.replace(/"/g, '""')}"`,
-    ]);
+    ], {}, server);
     if (drop.exitCode !== 0) throw new Error(drop.stderr || "DROP DATABASE failed");
   }
 
@@ -465,7 +470,7 @@ export async function restoreDatabase(
       "postgres",
       "-c",
       `CREATE DATABASE "${targetDb.replace(/"/g, '""')}"`,
-    ]);
+    ], {}, server);
     if (create.exitCode !== 0) throw new Error(create.stderr || "CREATE DATABASE failed");
   }
 
@@ -474,7 +479,7 @@ export async function restoreDatabase(
   try {
     await extractArchiveFile(project, archive, memberPath, tempFile, log);
     log(`Copying dump into container ${container.name}`);
-    containerFile = await copyFileToContainer(containerId, tempFile, "/tmp");
+    containerFile = await copyFileToContainer(containerId, tempFile, "/tmp", server);
     log(`Restoring into ${targetDb}`);
     const result = await execCapture(
       containerId,
@@ -489,6 +494,7 @@ export async function restoreDatabase(
         containerFile,
       ],
       {},
+      server,
     );
     if (result.stderr.trim()) {
       for (const line of result.stderr.split(/\r?\n/)) {
@@ -500,7 +506,7 @@ export async function restoreDatabase(
     }
   } finally {
     if (containerFile) {
-      await execCapture(containerId, ["rm", "-f", containerFile]).catch(() => {});
+      await execCapture(containerId, ["rm", "-f", containerFile], {}, server).catch(() => {});
     }
     try {
       fs.rmSync(tempFile, { force: true });

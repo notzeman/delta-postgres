@@ -27,6 +27,9 @@ services:
       dockerfile: Dockerfile
     container_name: delta-postgres
     restart: unless-stopped
+    labels:
+      # Never offer the dashboard itself as a backup project.
+      backup.ignore: "true"
     depends_on:
       dashboard-db:
         condition: service_healthy

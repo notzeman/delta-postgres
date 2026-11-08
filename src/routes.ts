@@ -16,6 +16,7 @@ import {
   setSetting,
   audit,
   getIgnoredProjects,
+  countUsers,
   type Project,
 } from "./db";
 import {
@@ -36,10 +37,21 @@ import {
   containerDatabases,
   postgresVersion,
 } from "./docker";
-import { discoverProjects, inspectForManualAdd } from "./discovery";
+import { discoverProjects, inspectForManualAdd, composeProjectSummary } from "./discovery";
+import { autoImportDiscoveredProjects } from "./autoDiscover";
+import {
+  listServers,
+  getServer,
+  getLocalServer,
+  serverStatus,
+  toPublicServer,
+  type ServerRow,
+} from "./servers";
+import { encryptSecret } from "./secrets";
 import {
   borgVersion,
   repoSizeBytes,
+  projectBackupDir,
   listArchiveFiles,
   deleteArchive,
   checkArchive,
@@ -91,6 +103,23 @@ async function requireProject(
   return project;
 }
 
+function queryServerId(request: FastifyRequest): number | undefined {
+  const value = Number((request.query as any)?.serverId);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+async function requireServer(
+  id: number,
+  reply: FastifyReply,
+): Promise<ServerRow | null> {
+  const server = await getServer(id);
+  if (!server) {
+    sendError(reply, 404, "Docker server not found");
+    return null;
+  }
+  return server;
+}
+
 function safeDbFile(db: string): string {
   return `databases/${db.replace(/[^a-zA-Z0-9_.-]/g, "_")}.dump`;
 }
@@ -101,6 +130,14 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const ip = request.ip;
     if (!checkLoginRate(ip)) {
       return sendError(reply, 429, "Too many login attempts. Try again in a minute.");
+    }
+    const users = await countUsers();
+    if (users === 0) {
+      return sendError(
+        reply,
+        503,
+        "No admin user configured. Run: docker compose exec dashboard npm run create-admin",
+      );
     }
     const body = z
       .object({ username: z.string().min(1), password: z.string().min(1) })
@@ -169,10 +206,277 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     return checks;
   });
 
+  // ---------- Docker servers ----------
+  app.get("/api/servers", async () => {
+    const servers = await listServers();
+    const counts = await pool.query<{ server_id: number; count: string }>(
+      `SELECT server_id, count(*)::text AS count FROM projects GROUP BY server_id`,
+    );
+    const countMap = new Map(counts.rows.map((row) => [row.server_id, Number(row.count)]));
+    const result = await Promise.all(
+      servers.map(async (server) => {
+        const status = server.enabled
+          ? await serverStatus(server)
+          : { online: false, error: "Disabled" };
+        return {
+          ...toPublicServer(server),
+          status,
+          projectCount: countMap.get(server.id) || 0,
+        };
+      }),
+    );
+    return { servers: result };
+  });
+
+  app.post("/api/servers", async (request, reply) => {
+    const schema = z.object({
+      name: z.string().min(1).max(80),
+      type: z.enum(["local", "tcp"]),
+      protocol: z.enum(["socket", "http", "https"]).optional(),
+      host: z.string().nullable().optional(),
+      port: z.number().int().min(1).max(65535).nullable().optional(),
+      socketPath: z.string().nullable().optional(),
+      tlsCa: z.string().nullable().optional(),
+      tlsCert: z.string().nullable().optional(),
+      tlsKey: z.string().nullable().optional(),
+      tlsVerify: z.boolean().optional(),
+      enabled: z.boolean().optional(),
+      skipTest: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
+    const body = parsed.data;
+
+    if (body.type === "local") {
+      const local = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM servers WHERE type = 'local'`,
+      );
+      if (Number(local.rows[0]?.count || 0) > 0) {
+        return sendError(reply, 400, "A local Docker server already exists");
+      }
+    }
+    if (body.type === "tcp" && !body.host) {
+      return sendError(reply, 400, "Host is required for a TCP Docker server");
+    }
+
+    const protocol = body.type === "local" ? "socket" : body.protocol || "http";
+    const port = body.type === "tcp" ? body.port ?? (protocol === "https" ? 2376 : 2375) : null;
+    const temp: ServerRow = {
+      id: 0,
+      name: body.name,
+      slug: slugify(body.name),
+      type: body.type,
+      protocol,
+      host: body.type === "tcp" ? body.host || null : null,
+      port,
+      socket_path: body.type === "local" ? body.socketPath || config.dockerSocket : null,
+      tls_ca: body.tlsCa || null,
+      tls_cert: body.tlsCert || null,
+      tls_key: body.tlsKey || null,
+      tls_verify: body.tlsVerify !== false,
+      enabled: body.enabled !== false,
+      created_at: "",
+      updated_at: "",
+    };
+
+    let status: any = null;
+    if (!body.skipTest) {
+      status = await serverStatus(temp);
+      if (!status.online) {
+        return sendError(reply, 400, `Connection failed: ${status.error || "unknown error"}`);
+      }
+    }
+
+    const existing = await pool.query<{ slug: string }>(`SELECT slug FROM servers`);
+    const slugs = new Set(existing.rows.map((row) => row.slug));
+    let slug = temp.slug;
+    let suffix = 1;
+    while (slugs.has(slug)) slug = `${temp.slug}-${suffix++}`;
+
+    const { rows } = await pool.query<ServerRow>(
+      `INSERT INTO servers(name, slug, type, protocol, host, port, socket_path,
+         tls_ca, tls_cert, tls_key, tls_verify, enabled)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [
+        temp.name,
+        slug,
+        temp.type,
+        temp.protocol,
+        temp.host,
+        temp.port,
+        temp.socket_path,
+        encryptSecret(temp.tls_ca),
+        encryptSecret(temp.tls_cert),
+        encryptSecret(temp.tls_key),
+        temp.tls_verify,
+        temp.enabled,
+      ],
+    );
+    await audit(getActor(request), "server.create", slug, {
+      type: temp.type,
+      host: temp.host,
+    });
+    return reply.code(201).send({
+      server: { ...toPublicServer(rows[0]), status: status || (await serverStatus(rows[0])) },
+    });
+  });
+
+  app.patch("/api/servers/:id", async (request, reply) => {
+    const id = Number((request.params as any).id);
+    const server = await getServer(id);
+    if (!server) return sendError(reply, 404, "Docker server not found");
+    const schema = z.object({
+      name: z.string().min(1).max(80).optional(),
+      host: z.string().nullable().optional(),
+      port: z.number().int().min(1).max(65535).nullable().optional(),
+      protocol: z.enum(["socket", "http", "https"]).optional(),
+      socketPath: z.string().nullable().optional(),
+      tlsCa: z.string().nullable().optional(),
+      tlsCert: z.string().nullable().optional(),
+      tlsKey: z.string().nullable().optional(),
+      tlsVerify: z.boolean().optional(),
+      enabled: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
+    const body: any = parsed.data;
+    if (server.type === "local") {
+      const forbidden = ["host", "port", "protocol", "socketPath", "tlsCa", "tlsCert", "tlsKey", "tlsVerify"];
+      if (forbidden.some((key) => body[key] !== undefined)) {
+        return sendError(reply, 400, "The local server connection cannot be changed");
+      }
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [];
+    const add = (column: string, value: any) => {
+      params.push(value);
+      updates.push(`${column} = $${params.length}`);
+    };
+    if (body.name !== undefined) add("name", body.name);
+    if (body.host !== undefined) add("host", body.host);
+    if (body.port !== undefined) add("port", body.port);
+    if (body.protocol !== undefined) add("protocol", body.protocol);
+    if (body.socketPath !== undefined) add("socket_path", body.socketPath);
+    if (body.tlsCa !== undefined) add("tls_ca", body.tlsCa ? encryptSecret(body.tlsCa) : null);
+    if (body.tlsCert !== undefined) add("tls_cert", body.tlsCert ? encryptSecret(body.tlsCert) : null);
+    if (body.tlsKey !== undefined) add("tls_key", body.tlsKey ? encryptSecret(body.tlsKey) : null);
+    if (body.tlsVerify !== undefined) add("tls_verify", body.tlsVerify);
+    if (body.enabled !== undefined) add("enabled", body.enabled);
+    if (!updates.length) {
+      return { server: { ...toPublicServer(server), status: await serverStatus(server) } };
+    }
+    params.push(id);
+    const { rows } = await pool.query<ServerRow>(
+      `UPDATE servers SET ${updates.join(", ")}, updated_at = now()
+       WHERE id = $${params.length} RETURNING *`,
+      params,
+    );
+    await audit(getActor(request), "server.update", server.slug, body);
+    return {
+      server: { ...toPublicServer(rows[0]), status: await serverStatus(rows[0]) },
+    };
+  });
+
+  app.delete("/api/servers/:id", async (request, reply) => {
+    const id = Number((request.params as any).id);
+    const server = await getServer(id);
+    if (!server) return sendError(reply, 404, "Docker server not found");
+    if (server.type === "local") return sendError(reply, 400, "The local server cannot be removed");
+    const count = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM projects WHERE server_id = $1`,
+      [id],
+    );
+    const projectCount = Number(count.rows[0]?.count || 0);
+    const force = (request.query as any)?.force === "true";
+    if (projectCount > 0 && !force) {
+      return reply.code(409).send({
+        error: `This server still has ${projectCount} project(s). Re-send with force=true to remove the server and its project records.`,
+        projectCount,
+      });
+    }
+    await pool.query(`DELETE FROM servers WHERE id = $1`, [id]);
+    await audit(getActor(request), "server.delete", server.slug, { projectCount, force });
+    return {
+      ok: true,
+      note: "Server removed. Project records were removed; Borg repository files were kept on disk.",
+    };
+  });
+
+  app.post("/api/servers/test", async (request, reply) => {
+    const schema = z.object({
+      type: z.enum(["local", "tcp"]).default("tcp"),
+      protocol: z.enum(["socket", "http", "https"]).optional(),
+      host: z.string().nullable().optional(),
+      port: z.number().int().min(1).max(65535).nullable().optional(),
+      socketPath: z.string().nullable().optional(),
+      tlsCa: z.string().nullable().optional(),
+      tlsCert: z.string().nullable().optional(),
+      tlsKey: z.string().nullable().optional(),
+      tlsVerify: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
+    const body = parsed.data;
+    const protocol = body.type === "local" ? "socket" : body.protocol || "http";
+    const temp: ServerRow = {
+      id: 0,
+      name: "test",
+      slug: "test",
+      type: body.type,
+      protocol,
+      host: body.host || null,
+      port: body.type === "tcp" ? body.port ?? (protocol === "https" ? 2376 : 2375) : null,
+      socket_path: body.type === "local" ? body.socketPath || config.dockerSocket : null,
+      tls_ca: body.tlsCa || null,
+      tls_cert: body.tlsCert || null,
+      tls_key: body.tlsKey || null,
+      tls_verify: body.tlsVerify !== false,
+      enabled: true,
+      created_at: "",
+      updated_at: "",
+    };
+    const status = await serverStatus(temp);
+    return status;
+  });
+
+  app.post("/api/servers/:id/test", async (request, reply) => {
+    const server = await getServer(Number((request.params as any).id));
+    if (!server) return sendError(reply, 404, "Docker server not found");
+    return serverStatus(server);
+  });
+
+  app.post("/api/servers/:id/scan", async (request, reply) => {
+    const server = await getServer(Number((request.params as any).id));
+    if (!server) return sendError(reply, 404, "Docker server not found");
+    try {
+      const discovered = await discoverProjects(server);
+      const added = await autoImportDiscoveredProjects(discovered);
+      return {
+        ok: true,
+        added,
+        projects: await getProjects(server.id),
+      };
+    } catch (error) {
+      return sendError(
+        reply,
+        500,
+        error instanceof Error ? error.message : "Scan failed",
+      );
+    }
+  });
+
   // ---------- Stats ----------
-  app.get("/api/stats", async () => {
-    const projects = await getProjects();
-    const jobs = await getJobs(12);
+  app.get("/api/stats", async (request) => {
+    const serverId = queryServerId(request);
+    const projects = await getProjects(serverId);
+    const projectIds = projects.map((p) => p.id);
+    const filterIds = serverId ? projectIds : null;
+    const allJobs = await getJobs(200);
+    const jobs = allJobs
+      .filter((job) => !serverId || projectIds.includes(job.project_id))
+      .slice(0, 12);
     const totals = await pool.query<{
       archives: string;
       original: string;
@@ -183,23 +487,34 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
               COALESCE(sum(original_size), 0)::text AS original,
               COALESCE(sum(deduplicated_size), 0)::text AS deduplicated,
               COALESCE(sum(size_bytes), 0)::text AS compressed
-       FROM archives`,
+       FROM archives
+       WHERE ($1::int[] IS NULL OR project_id = ANY($1::int[]))`,
+      [filterIds],
     );
     let repoBytes = 0;
     for (const project of projects) repoBytes += repoSizeBytes(project);
     const lastSuccess = await pool.query<{ at: string | null }>(
-      `SELECT max(finished_at) AS at FROM backup_jobs WHERE status = 'success'`,
+      `SELECT max(finished_at) AS at FROM backup_jobs
+       WHERE status = 'success'
+         AND ($1::int[] IS NULL OR project_id = ANY($1::int[]))`,
+      [filterIds],
     );
     const last24 = await pool.query<{ status: string; count: string }>(
       `SELECT status, count(*)::text AS count FROM backup_jobs
-       WHERE created_at > now() - interval '24 hours' GROUP BY status`,
+       WHERE created_at > now() - interval '24 hours'
+         AND ($1::int[] IS NULL OR project_id = ANY($1::int[]))
+       GROUP BY status`,
+      [filterIds],
     );
     const series = await pool.query(
       `SELECT a.name, a.created_at, a.original_size, a.deduplicated_size, p.name AS project
        FROM archives a JOIN projects p ON p.id = a.project_id
+       WHERE ($1::int[] IS NULL OR a.project_id = ANY($1::int[]))
        ORDER BY a.created_at DESC NULLS LAST LIMIT 30`,
+      [filterIds],
     );
     return {
+      serverId: serverId || null,
       projects: {
         total: projects.length,
         enabled: projects.filter((p) => p.enabled).length,
@@ -218,43 +533,92 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- Discovery ----------
-  app.get("/api/discovery", async () => {
-    const projects = await discoverProjects();
-    const managed = await getProjects();
-    const managedSlugs = new Set(managed.map((p) => p.slug));
+  app.get("/api/discovery", async (request) => {
+    const serverId = queryServerId(request);
+    let servers = await listServers();
+    servers = serverId
+      ? servers.filter((server) => server.id === serverId)
+      : servers.filter((server) => server.enabled);
+    const settings = await getSettings();
+    const managed = await getProjects(serverId);
+    const managedKeys = new Set(managed.map((p) => `${p.server_id}:${p.slug}`));
+
+    const allDiscovered: any[] = [];
+    let autoAdded = 0;
+    let composeProjects: any[] = [];
+    let total = 0;
+    let withPostgres = 0;
+
+    for (const server of servers) {
+      try {
+        let discovered = await discoverProjects(server);
+        const added = await autoImportDiscoveredProjects(discovered);
+        if (added > 0) discovered = await discoverProjects(server);
+        autoAdded += added;
+        allDiscovered.push(...discovered);
+        const compose = await composeProjectSummary(server);
+        composeProjects.push(...compose.projects);
+        total += compose.total;
+        withPostgres += compose.withPostgres;
+      } catch (error) {
+        request.log.error(error, `Discovery failed for server ${server.name}`);
+      }
+    }
+
     return {
-      projects: projects.map((p) => ({
+      projects: allDiscovered.map((p) => ({
         ...p,
         canAdd: !p.managedProjectId && !p.ignored,
         alreadyManaged: p.managedProjectId
           ? true
-          : managedSlugs.has(slugify(p.name)),
+          : managedKeys.has(`${p.serverId}:${slugify(p.name)}`),
       })),
+      autoAdded,
+      autoAddProjects: settings.autoAddProjects !== false,
+      composeProjects,
+      summary: { total, withPostgres },
+      servers: servers.map(toPublicServer),
     };
   });
 
   app.post("/api/discovery/ignore", async (request, reply) => {
     const body = z
-      .object({ composeProject: z.string().min(1), ignore: z.boolean() })
+      .object({
+        serverId: z.number().int().positive(),
+        composeProject: z.string().min(1),
+        ignore: z.boolean(),
+      })
       .safeParse(request.body);
-    if (!body.success) return sendError(reply, 400, "composeProject and ignore are required");
+    if (!body.success) return sendError(reply, 400, "serverId, composeProject and ignore are required");
+    const server = await requireServer(body.data.serverId, reply);
+    if (!server) return;
     if (body.data.ignore) {
       await pool.query(
-        `INSERT INTO ignored_projects(compose_project) VALUES($1) ON CONFLICT DO NOTHING`,
-        [body.data.composeProject],
+        `INSERT INTO ignored_projects(server_id, compose_project) VALUES($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [server.id, body.data.composeProject],
       );
     } else {
-      await pool.query(`DELETE FROM ignored_projects WHERE compose_project = $1`, [
-        body.data.composeProject,
-      ]);
+      await pool.query(
+        `DELETE FROM ignored_projects WHERE server_id = $1 AND compose_project = $2`,
+        [server.id, body.data.composeProject],
+      );
     }
-    await audit(getActor(request), body.data.ignore ? "discovery.ignore" : "discovery.unignore", body.data.composeProject);
+    await audit(
+      getActor(request),
+      body.data.ignore ? "discovery.ignore" : "discovery.unignore",
+      `${server.slug}/${body.data.composeProject}`,
+    );
     return { ok: true };
   });
 
-  app.get("/api/containers", async () => {
-    const containers = await listAllContainers();
+  app.get("/api/containers", async (request, reply) => {
+    const serverId = queryServerId(request);
+    const server = serverId ? await getServer(serverId) : await getLocalServer();
+    if (!server) return sendError(reply, 404, "Docker server not found");
+    const containers = await listAllContainers(server);
     return {
+      serverId: server.id,
       containers: containers
         .filter((c) => c.labels["backup.ignore"] !== "true")
         .map((c) => ({
@@ -274,12 +638,21 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
   app.post("/api/projects/inspect", async (request, reply) => {
     const body = z
-      .object({ container: z.string().min(1) })
+      .object({
+        container: z.string().min(1),
+        serverId: z.number().int().positive().optional(),
+      })
       .safeParse(request.body);
     if (!body.success) return sendError(reply, 400, "Container is required");
+    const server = body.data.serverId
+      ? await getServer(body.data.serverId)
+      : await getLocalServer();
+    if (!server) return sendError(reply, 404, "Docker server not found");
     try {
-      const info = await inspectForManualAdd(body.data.container);
+      const info = await inspectForManualAdd(body.data.container, server);
       return {
+        serverId: server.id,
+        serverName: server.name,
         container: {
           id: info.container.id,
           name: info.container.name,
@@ -300,13 +673,22 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- Projects ----------
-  app.get("/api/projects", async () => {
-    const projects = await getProjects();
-    const containers = await listAllContainers().catch(() => []);
-    const byId = new Map(containers.map((c) => [c.id, c]));
-    const byName = new Map(containers.map((c) => [c.name, c]));
+  app.get("/api/projects", async (request) => {
+    const serverId = queryServerId(request);
+    const projects = await getProjects(serverId);
+    const servers = await listServers();
+    const serverMap = new Map(servers.map((server) => [server.id, server]));
+    const containersByServer = new Map<number, any[]>();
+    for (const id of new Set(projects.map((project) => project.server_id))) {
+      const server = serverMap.get(id);
+      if (!server) continue;
+      containersByServer.set(id, await listAllContainers(server).catch(() => []));
+    }
     const result = [];
     for (const project of projects) {
+      const containers = containersByServer.get(project.server_id) || [];
+      const byId = new Map(containers.map((c) => [c.id, c]));
+      const byName = new Map(containers.map((c) => [c.name, c]));
       const container =
         (project.container_id ? byId.get(project.container_id) : undefined) ||
         (project.container_name ? byName.get(project.container_name) : undefined);
@@ -334,6 +716,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.post("/api/projects", async (request, reply) => {
     const schema = z.object({
       name: z.string().min(1).max(120),
+      serverId: z.number().int().positive().optional(),
       containerId: z.string().optional(),
       containerName: z.string().optional(),
       pgUser: z.string().optional(),
@@ -353,10 +736,14 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const body = parsed.data;
     const ref = body.containerId || body.containerName;
     if (!ref) return sendError(reply, 400, "A container is required");
+    const server = body.serverId
+      ? await getServer(body.serverId)
+      : await getLocalServer();
+    if (!server) return sendError(reply, 404, "Docker server not found");
 
     let info;
     try {
-      info = await inspectForManualAdd(ref);
+      info = await inspectForManualAdd(ref, server);
     } catch (error) {
       return sendError(reply, 404, error instanceof Error ? error.message : "Container not found");
     }
@@ -372,19 +759,21 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (computeNextRun(cron) === null) return sendError(reply, 400, "Invalid cron expression");
 
     let slug = slugify(body.name);
-    const existing = await getProjectBySlug(slug);
+    const existing = await getProjectBySlug(slug, server.id);
     if (existing) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
 
     const { rows } = await pool.query<Project>(
-      `INSERT INTO projects(name, slug, source, enabled, container_id, container_name,
-        container_image, compose_project, pg_user, pg_default_db, databases,
-        schedule_cron, keep_daily, keep_weekly, keep_monthly, compression, notes, next_run_at)
-       VALUES($1,$2,$3,true,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      `INSERT INTO projects(name, slug, source, enabled, server_id, container_id,
+        container_name, container_image, compose_project, pg_user, pg_default_db,
+        databases, schedule_cron, keep_daily, keep_weekly, keep_monthly, compression,
+        notes, next_run_at)
+       VALUES($1,$2,$3,true,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING *`,
       [
         body.name,
         slug,
         body.source || "manual",
+        server.id,
         info.container.id,
         info.container.name,
         info.container.image,
@@ -403,8 +792,17 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     );
     await audit(getActor(request), "project.create", rows[0].slug, {
       container: info.container.name,
+      server: server.name,
     });
-    return reply.code(201).send({ project: rows[0] });
+    // A manually created project should override a previous "ignore" decision.
+    for (const key of [info.container.composeProject, info.container.name].filter(Boolean)) {
+      await pool.query(
+        `DELETE FROM ignored_projects WHERE server_id = $1 AND compose_project = $2`,
+        [server.id, key],
+      );
+    }
+    const created = await getProject(rows[0].id);
+    return reply.code(201).send({ project: created || rows[0] });
   });
 
   app.get("/api/projects/:id", async (request, reply) => {
@@ -418,17 +816,22 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     let container: any = null;
     let liveDatabases: Array<{ name: string; sizeBytes: number }> = [];
     let version = "";
+    const server = await getServer(project.server_id);
     try {
-      container = await getContainer(project.container_id || project.container_name || "");
+      container = await getContainer(
+        project.container_id || project.container_name || "",
+        server,
+      );
       if (container.state === "running") {
-        liveDatabases = await containerDatabases(container.id, project.pg_user);
-        version = await postgresVersion(container.id, project.pg_user);
+        liveDatabases = await containerDatabases(container.id, project.pg_user, server);
+        version = await postgresVersion(container.id, project.pg_user, server);
       }
     } catch {
       /* container may be missing */
     }
     return {
       project: { ...project, repoBytes: repoSizeBytes(project) },
+      server: server ? toPublicServer(server) : null,
       archives,
       jobs: jobs.rows,
       container: container
@@ -509,9 +912,23 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.delete("/api/projects/:id", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
+    // Remember the decision so auto-discovery does not immediately re-add it.
+    const ignoreKey = project.compose_project || project.container_name;
+    if (ignoreKey) {
+      await pool.query(
+        `INSERT INTO ignored_projects(server_id, compose_project) VALUES($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [project.server_id, ignoreKey],
+      );
+    }
     await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
-    await audit(getActor(request), "project.delete", project.slug);
-    return { ok: true, note: "Borg repository files were kept on disk." };
+    await audit(getActor(request), "project.delete", project.slug, {
+      ignored: ignoreKey ? [ignoreKey] : [],
+    });
+    return {
+      ok: true,
+      note: "Project removed. Its compose project was ignored so auto-discovery will not re-add it. Borg repository files were kept on disk.",
+    };
   });
 
   // ---------- Backups ----------
@@ -525,8 +942,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/backups", async (request) => {
-    const jobs = await enqueueAll("manual");
-    await audit(getActor(request), "backup.manual.all", undefined, { jobs: jobs.length });
+    const body = z
+      .object({ serverId: z.number().int().positive().optional() })
+      .safeParse(request.body || {});
+    const serverId = body.success ? body.data.serverId : undefined;
+    const jobs = await enqueueAll("manual", serverId);
+    await audit(getActor(request), "backup.manual.all", undefined, {
+      jobs: jobs.length,
+      serverId: serverId || null,
+    });
     return { jobs };
   });
 
@@ -643,10 +1067,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (!project.container_id && !project.container_name) {
       return sendError(reply, 400, "Project has no container");
     }
+    const server = await getServer(project.server_id);
+    if (!server) return sendError(reply, 404, "Docker server not found");
     const lines: string[] = [];
     try {
       await restoreDatabase(
         project,
+        server,
         project.container_id || project.container_name!,
         body.data.archive,
         safeDbFile(body.data.database),
@@ -684,7 +1111,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.get("/api/projects/:id/export", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
-    const root = path.join(config.backupRoot, project.slug);
+    const root = projectBackupDir(project);
     if (!fs.existsSync(root)) return sendError(reply, 404, "No repository on disk for this project");
     const child = exportRepoStream(project);
     reply.header("Content-Type", "application/x-tar");
@@ -835,7 +1262,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
           }
         }
         if (!sourceRepo) throw new Error("Uploaded archive does not contain a Borg repository");
-        const targetDir = path.join(config.backupRoot, project.slug);
+        const targetDir = projectBackupDir(project);
         ensureDir(targetDir);
         rmrf(path.join(targetDir, "repo"));
         // Clear per-project Borg cache/security metadata; the imported repository may
@@ -868,6 +1295,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         keepWeekly: stored.keepWeekly ?? config.keepWeekly,
         keepMonthly: stored.keepMonthly ?? config.keepMonthly,
         notificationWebhook: stored.notificationWebhook ?? "",
+        autoAddProjects: stored.autoAddProjects !== false,
         timezone: config.timezone,
         concurrency: config.concurrency,
         appVersion: config.appVersion,
@@ -885,6 +1313,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       keepWeekly: z.number().int().min(0).optional(),
       keepMonthly: z.number().int().min(0).optional(),
       notificationWebhook: z.string().optional(),
+      autoAddProjects: z.boolean().optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");

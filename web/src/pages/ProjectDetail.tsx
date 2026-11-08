@@ -79,6 +79,7 @@ export default function ProjectDetail() {
   });
 
   const project = projectQuery.data?.project;
+  const server = projectQuery.data?.server;
   const archives = projectQuery.data?.archives || [];
   const jobs = projectQuery.data?.jobs || [];
   const container = projectQuery.data?.container;
@@ -281,8 +282,8 @@ export default function ProjectDetail() {
             {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            {project.container_name || "no container"} · {project.container_image || "unknown image"} ·{" "}
-            {project.pg_user}
+            {project.server_name || "local"} · {project.container_name || "no container"} ·{" "}
+            {project.container_image || "unknown image"} · {project.pg_user}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -327,6 +328,17 @@ export default function ProjectDetail() {
                 label="Container"
                 value={project.container_name || "—"}
                 hint={container?.state || project.containerState || "unknown"}
+              />
+              <DetailStat
+                label="Docker server"
+                value={server?.name || project.server_name || "local"}
+                hint={
+                  server?.type === "local"
+                    ? server.socket_path || "local socket"
+                    : server
+                      ? `${server.protocol}://${server.host}:${server.port}`
+                      : "—"
+                }
               />
               <DetailStat
                 label="PostgreSQL"

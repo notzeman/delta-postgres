@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -23,7 +23,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, formatBytes, timeAgo } from "../api";
-import type { Health, Project, Stats } from "../types";
+import type { Health, Project, Stats, DockerServer } from "../types";
 import {
   Badge,
   Button,
@@ -34,6 +34,7 @@ import {
   Spinner,
   StatCard,
   StatusBadge,
+  Select,
   cn,
 } from "../components/ui";
 
@@ -54,15 +55,22 @@ function ChartTooltip({ active, payload, label }: any) {
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
+  const [serverFilter, setServerFilter] = useState("all");
+  const serverQuery = serverFilter === "all" ? "" : `?serverId=${serverFilter}`;
   const statsQuery = useQuery({
-    queryKey: ["stats"],
-    queryFn: () => api<Stats>("/stats"),
+    queryKey: ["stats", serverFilter],
+    queryFn: () => api<Stats>(`/stats${serverQuery}`),
     refetchInterval: 15_000,
   });
   const projectsQuery = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api<{ projects: Project[] }>("/projects"),
+    queryKey: ["projects", serverFilter],
+    queryFn: () => api<{ projects: Project[] }>(`/projects${serverQuery}`),
     refetchInterval: 20_000,
+  });
+  const serversQuery = useQuery({
+    queryKey: ["servers"],
+    queryFn: () => api<{ servers: DockerServer[] }>("/servers"),
+    staleTime: 30_000,
   });
   const healthQuery = useQuery({
     queryKey: ["health"],
@@ -71,10 +79,17 @@ export default function Dashboard() {
   });
 
   const backupAll = useMutation({
-    mutationFn: () => api<{ jobs: any[] }>("/backups", { method: "POST" }),
+    mutationFn: () =>
+      api<{ jobs: any[] }>("/backups", {
+        method: "POST",
+        body: JSON.stringify({
+          serverId: serverFilter === "all" ? undefined : Number(serverFilter),
+        }),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
   const backupOne = useMutation({
@@ -117,7 +132,20 @@ export default function Dashboard() {
             Borg repositories with chunk-level delta storage.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={serverFilter}
+            onChange={(event) => setServerFilter(event.target.value)}
+            className="w-48"
+            title="Filter by Docker server"
+          >
+            <option value="all">All servers</option>
+            {(serversQuery.data?.servers || []).map((server) => (
+              <option key={server.id} value={server.id}>
+                {server.name}
+              </option>
+            ))}
+          </Select>
           <Button
             variant="primary"
             onClick={() => backupAll.mutate()}
@@ -227,8 +255,9 @@ export default function Dashboard() {
                           {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
                         </div>
                         <p className="mt-1 truncate text-xs text-slate-500">
-                          {project.container_name || "no container"} · {project.pg_user} ·{" "}
-                          {project.archiveCount ?? 0} archives · {formatBytes(project.repoBytes)}
+                          {project.server_name || "local"} · {project.container_name || "no container"} ·{" "}
+                          {project.pg_user} · {project.archiveCount ?? 0} archives ·{" "}
+                          {formatBytes(project.repoBytes)}
                         </p>
                       </Link>
                       <div className="flex items-center gap-4 text-right">

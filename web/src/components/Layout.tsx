@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Server,
   Settings as SettingsIcon,
   ShieldCheck,
   X,
@@ -21,6 +22,7 @@ import { cn } from "./ui";
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/projects", label: "Projects", icon: Database },
+  { to: "/servers", label: "Servers", icon: Server },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/transfer", label: "Import / Export", icon: ArrowDownUp },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
@@ -30,6 +32,7 @@ function useTitle(): string {
   const location = useLocation();
   if (location.pathname.startsWith("/projects/")) return "Project";
   if (location.pathname.startsWith("/projects")) return "Projects";
+  if (location.pathname.startsWith("/servers")) return "Servers";
   if (location.pathname.startsWith("/activity")) return "Activity";
   if (location.pathname.startsWith("/transfer")) return "Import / Export";
   if (location.pathname.startsWith("/settings")) return "Settings";
@@ -82,7 +85,7 @@ export default function Layout({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-white/5 bg-ink-950/95 backdrop-blur-xl transition-transform lg:static lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex h-screen w-64 flex-col overflow-y-auto border-r border-white/5 bg-ink-950/95 backdrop-blur-xl transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:self-start",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -104,7 +107,7 @@ export default function Layout({
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 px-3">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3">
           {NAV.map((item) => {
             const Icon = item.icon;
             return (

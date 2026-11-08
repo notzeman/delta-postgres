@@ -22,6 +22,7 @@ import {
   archiveInfo,
   repoSizeBytes,
 } from "./borg";
+import { getServer } from "./servers";
 import {
   ensureDir,
   rmrf,
@@ -104,10 +105,18 @@ export async function enqueueProject(
   return createJob(projectId, trigger);
 }
 
-export async function enqueueAll(trigger: string): Promise<BackupJob[]> {
-  const { rows } = await pool.query<Project>(
-    `SELECT * FROM projects WHERE enabled = true ORDER BY name`,
-  );
+export async function enqueueAll(
+  trigger: string,
+  serverId?: number,
+): Promise<BackupJob[]> {
+  const { rows } = serverId
+    ? await pool.query<Project>(
+        `SELECT * FROM projects WHERE enabled = true AND server_id = $1 ORDER BY name`,
+        [serverId],
+      )
+    : await pool.query<Project>(
+        `SELECT * FROM projects WHERE enabled = true ORDER BY name`,
+      );
   const jobs: BackupJob[] = [];
   for (const project of rows) {
     if (trigger === "scheduled" && (await hasActiveJob(project.id))) continue;
@@ -167,11 +176,14 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
     if (error instanceof Error && error.message.includes("Less than")) throw error;
   }
 
-  const container = await getContainer(containerRef);
+  const server = await getServer(project.server_id);
+  if (!server) throw new Error("Docker server not found for this project");
+  const container = await getContainer(containerRef, server);
   if (container.state !== "running") {
     throw new Error(`Container ${container.name} is not running (state: ${container.state})`);
   }
   const pgUser = project.pg_user || container.env.POSTGRES_USER || "postgres";
+  log(`Server: ${server.name} (${server.type === "local" ? "local socket" : `${server.protocol}://${server.host}:${server.port}`})`);
   log(`Container: ${container.name} (${container.image})`);
   log(`PostgreSQL user: ${pgUser}`);
 
@@ -180,13 +192,13 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
     databases = project.databases;
     log(`Using selected databases: ${databases.join(", ")}`);
   } else {
-    const dbs = await containerDatabases(container.id, pgUser);
+    const dbs = await containerDatabases(container.id, pgUser, server);
     databases = dbs.map((d) => d.name);
     log(`Discovered databases: ${databases.join(", ")}`);
   }
   if (databases.length === 0) throw new Error("No databases found to back up");
 
-  const version = await postgresVersion(container.id, pgUser);
+  const version = await postgresVersion(container.id, pgUser, server);
   log(`Server version: ${version || "unknown"}`);
 
   const staging = path.join(config.stagingRoot, `job-${job.id}`);
@@ -202,6 +214,8 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
       ["pg_dumpall", "-U", pgUser, "--globals-only"],
       globalsFile,
       (line) => log(`pg_dumpall: ${line}`),
+      {},
+      server,
     );
     if (globals.exitCode !== 0) {
       throw new Error(globals.stderr.trim() || "pg_dumpall failed");
@@ -225,6 +239,8 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
         ["pg_dump", "-U", pgUser, "-Fc", "-Z", "0", "-d", db],
         dumpFile,
         (line) => log(`pg_dump ${db}: ${line}`),
+        {},
+        server,
       );
       if (dump.exitCode !== 0) {
         throw new Error(dump.stderr.trim() || `pg_dump failed for ${db}`);
