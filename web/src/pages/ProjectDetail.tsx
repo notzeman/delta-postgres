@@ -898,41 +898,54 @@ export default function ProjectDetail() {
                   </Button>
                 </div>
               </Field>
-              <Field
-                label="Source database"
-                hint={
-                  archiveDatabases
-                    ? `This archive contains ${archiveDatabases.length} database dump${
-                        archiveDatabases.length === 1 ? "" : "s"
-                      }.`
-                    : "A database dump from inside the selected archive"
-                }
-              >
-                <Picker
-                  value={restore.database}
-                  onChange={(next) => {
-                    setRestore((current) => ({
-                      ...current,
-                      database: next,
-                      target: `restore_${next}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
-                    }));
-                  }}
-                  options={(archiveDatabases || []).map((db) => ({
-                    value: db.name,
-                    label: db.name,
-                    description: `${db.path} · ${formatBytes(db.sizeBytes)}`,
-                    icon: <Database className="h-4 w-4" />,
-                  }))}
-                  placeholder={
-                    archiveDbsQuery.isLoading
-                      ? "Loading archive contents…"
-                      : "Select a database dump…"
-                  }
-                  searchable
-                  disabled={!restore.archive || archiveDbsQuery.isLoading}
-                  ariaLabel="Source database"
-                />
-              </Field>
+              {archiveDbsQuery.isLoading ? (
+                <Field label="Database dump" hint="Reading the selected archive…">
+                  <div className="input text-slate-500">Loading archive contents…</div>
+                </Field>
+              ) : archiveDatabases && archiveDatabases.length === 1 ? (
+                <Field
+                  label="Database dump"
+                  hint="Only this dump file is restored. The archive contains one database."
+                >
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-ink-950/60 px-3 py-2 text-xs">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Database className="h-4 w-4 shrink-0 text-accent-400" />
+                      <span className="truncate font-mono text-slate-200">
+                        {archiveDatabases[0].path}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-slate-500">
+                      {formatBytes(archiveDatabases[0].sizeBytes)}
+                    </span>
+                  </div>
+                </Field>
+              ) : archiveDatabases && archiveDatabases.length > 1 ? (
+                <Field
+                  label="Database dump"
+                  hint={`This archive contains ${archiveDatabases.length} separate dump files. Choose which one to restore.`}
+                >
+                  <Picker
+                    value={restore.database}
+                    onChange={(next) => {
+                      setRestore((current) => ({
+                        ...current,
+                        database: next,
+                        target: `restore_${next}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+                      }));
+                    }}
+                    options={archiveDatabases.map((db) => ({
+                      value: db.name,
+                      label: db.name,
+                      description: `${db.path} · ${formatBytes(db.sizeBytes)}`,
+                      icon: <Database className="h-4 w-4" />,
+                    }))}
+                    placeholder="Select a database dump…"
+                    searchable
+                    disabled={!restore.archive}
+                    ariaLabel="Database dump"
+                  />
+                </Field>
+              ) : null}
               {archiveDbsQuery.isError ? (
                 <ErrorBox
                   message={

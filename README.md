@@ -223,8 +223,9 @@ The dashboard's metadata lives in the `dashboard-db` Postgres container and is e
 
 Open a project → **Restore**:
 
-- Choose an archive. The **Source database** list is read directly from that archive’s `databases/*.dump` files.
-- **Source database** is the dump to extract; **Target database** is where it is restored in the current PostgreSQL container.
+- Choose an archive. The **Database dump** list is read directly from that archive’s `databases/*.dump` files.
+- **Database dump** is the dump to extract; **Target database** is where it is restored in the current PostgreSQL container.
+- If the archive contains exactly one dump, the dashboard shows it read-only and skips the picker. Multiple dumps get a picker.
 - The default target is a new database: `restore_<db>_<date>`.
 - The project container is re-resolved automatically before restore.
 - Enabling **Overwrite** terminates connections, drops the target, and requires typing the target name.
@@ -246,7 +247,7 @@ Restores are intentionally non-destructive by default.
 
 Open a project and use the **Import / export** tab to download its full repository or a specific archive, and to upload a new archive or replace the repository — all scoped to that project. Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
 
-An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The restore **Source database** picker lists those dumps. If a project has three databases, the archive has three dumps.
+An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The restore **Database dump** picker lists those dumps. If a project has three databases, the archive has three dumps.
 
 Imported archives are subject to the project's retention policy. Importing an archive with the same timestamp/day as an existing one can result in one being removed by the next `borg prune`; the catalog now reconciles automatically and removes rows for archives that no longer exist.
 
@@ -416,7 +417,7 @@ Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is pres
 A previous run may still hold a lock. Check `docker compose logs dashboard`, then run `borg break-lock <repo>` in the container.
 
 **Restore fails with a missing member path**
-The restore form lists databases from the selected archive itself. Pick a source database from that list; the exact `databases/<name>.dump` member is sent to the backend.
+The restore form lists dump files from the selected archive itself. Pick a database dump from that list; the exact `databases/<name>.dump` member is sent to the backend.
 
 **Dashboard can't reach Docker**
 Verify the runtime process ownership and group membership:

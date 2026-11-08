@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { Check, Loader2, X } from "lucide-react";
+import { useSnackbar } from "./Snackbar";
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -413,17 +414,17 @@ export function Switch({
 }
 
 export function ErrorBox({ message }: { message: string }) {
-  return (
-    <div className="rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-      {message}
-    </div>
-  );
+  const snackbar = useSnackbar();
+  useEffect(() => {
+    if (message) snackbar.error(message);
+  }, [message, snackbar]);
+  return null;
 }
 
-export function SuccessBox({ message }: { message: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
-      {message}
-    </div>
-  );
+export function SuccessBox({ message }: { message: string }) {
+  const snackbar = useSnackbar();
+  useEffect(() => {
+    if (message) snackbar.success(message);
+  }, [message, snackbar]);
+  return null;
 }

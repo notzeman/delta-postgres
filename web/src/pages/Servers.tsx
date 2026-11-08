@@ -300,13 +300,13 @@ function ServerFormModal({
         />
 
         {testResult ? (
-          <SuccessBox
-            message={
-              testResult.online
-                ? `Connected · Docker ${testResult.version} (API ${testResult.apiVersion})`
-                : `Connection failed: ${testResult.error}`
-            }
-          />
+          testResult.online ? (
+            <SuccessBox
+              message={`Connected · Docker ${testResult.version} (API ${testResult.apiVersion})`}
+            />
+          ) : (
+            <ErrorBox message={`Connection failed: ${testResult.error}`} />
+          )
         ) : null}
         {error ? <ErrorBox message={error} /> : null}
 
