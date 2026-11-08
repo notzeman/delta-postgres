@@ -28,6 +28,30 @@ import {
 } from "../components/ui";
 import CronField from "../components/CronField";
 import Pagination from "../components/Pagination";
+import Picker from "../components/Picker";
+
+const FALLBACK_TIMEZONES = [
+  "UTC",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+];
+
+const TIMEZONES: string[] = (() => {
+  try {
+    const values = (Intl as any).supportedValuesOf?.("timeZone");
+    return Array.isArray(values) && values.length > 0 ? values : FALLBACK_TIMEZONES;
+  } catch {
+    return FALLBACK_TIMEZONES;
+  }
+})();
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -60,6 +84,8 @@ export default function Settings() {
     keepMonthly: "6",
     notificationWebhook: "",
     autoAddProjects: true,
+    timezone: "Asia/Kolkata",
+    concurrency: "1",
   });
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -74,6 +100,8 @@ export default function Settings() {
       keepMonthly: String(settings.keepMonthly),
       notificationWebhook: settings.notificationWebhook || "",
       autoAddProjects: settings.autoAddProjects !== false,
+      timezone: settings.timezone || "Asia/Kolkata",
+      concurrency: String(settings.concurrency || 1),
     });
   }, [settingsQuery.data?.settings]);
 
@@ -88,6 +116,8 @@ export default function Settings() {
           keepMonthly: Number(form.keepMonthly),
           notificationWebhook: form.notificationWebhook,
           autoAddProjects: form.autoAddProjects,
+          timezone: form.timezone,
+          concurrency: Number(form.concurrency),
         }),
       }),
     onSuccess: () => {
@@ -165,6 +195,37 @@ export default function Settings() {
                   min={0}
                   value={form.keepMonthly}
                   onChange={(event) => setForm((f) => ({ ...f, keepMonthly: event.target.value }))}
+                />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Timezone"
+                hint="Cron schedules use this timezone. Restart the container to apply it to OS-level timestamps."
+              >
+                <Picker
+                  value={form.timezone}
+                  onChange={(value) => setForm((f) => ({ ...f, timezone: value }))}
+                  options={TIMEZONES.map((timezone) => ({
+                    value: timezone,
+                    label: timezone,
+                  }))}
+                  searchable
+                  ariaLabel="Timezone"
+                />
+              </Field>
+              <Field
+                label="Concurrent backup jobs"
+                hint="1–10. Applies on the next worker tick; running jobs are not interrupted."
+              >
+                <Picker
+                  value={form.concurrency}
+                  onChange={(value) => setForm((f) => ({ ...f, concurrency: value }))}
+                  options={Array.from({ length: 10 }, (_, index) => index + 1).map((value) => ({
+                    value: String(value),
+                    label: `${value} job${value === 1 ? "" : "s"}`,
+                  }))}
+                  ariaLabel="Concurrent backup jobs"
                 />
               </Field>
             </div>

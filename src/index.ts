@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { config, ensureRuntimeDirs } from "./config";
-import { initDb, countUsers } from "./db";
+import { initDb, countUsers, getSettings } from "./db";
 import { currentUser } from "./auth";
 import { registerApi } from "./routes";
 import { startJobWorker, stopJobWorker } from "./jobs";
@@ -81,7 +81,10 @@ async function main(): Promise<void> {
   });
 
   await initDb();
-  const userCount = await countUsers();
+  const [userCount, settings] = await Promise.all([countUsers(), getSettings()]);
+  const timezone = String(settings.timezone || config.timezone);
+  const concurrency = Number(settings.concurrency || config.concurrency);
+  process.env.TZ = timezone;
 
   const version = await borgVersion();
   let docker = "unavailable";
@@ -96,12 +99,12 @@ async function main(): Promise<void> {
     {
       dataDir: config.dataDir,
       backupRoot: config.backupRoot,
-      timezone: config.timezone,
+      timezone,
       borg: version,
       docker,
       users: userCount,
       defaultCron: config.defaultCron,
-      concurrency: config.concurrency,
+      concurrency: concurrency,
     },
     "DeltaPostgres starting",
   );

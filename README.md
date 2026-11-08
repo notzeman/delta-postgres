@@ -247,15 +247,9 @@ Admin users live in the metadata PostgreSQL database and are managed with the CL
 | `DASHBOARD_PORT` | `8095` | Published port |
 | `APP_UID` / `APP_GID` | `1001` | Container runtime user; must own `./data` and `./backups` |
 | `DOCKER_GID` | `988` | Host Docker group GID |
-| `CONCURRENCY` | `1` | Parallel backup jobs |
-| `DEFAULT_CRON` | `0 2 * * *` | Global schedule |
-| `RETENTION_KEEP_DAILY` | `7` | Global retention |
-| `RETENTION_KEEP_WEEKLY` | `4` | Global retention |
-| `RETENTION_KEEP_MONTHLY` | `6` | Global retention |
-| `TZ` | `Asia/Kolkata` | Scheduler timezone |
 | `COOKIE_SECURE` | `false` | Set `true` behind HTTPS |
 
-Global schedule/retention and the notification webhook can also be changed in the UI. Per-project cron and retention override globals.
+Global schedule, timezone, concurrency, retention, the notification webhook, and auto-add behavior are configured in the dashboard **Settings** page. Per-project cron and retention override the globals.
 
 ---
 

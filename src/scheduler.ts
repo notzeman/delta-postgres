@@ -5,16 +5,25 @@ import { enqueueProject, hasActiveJob } from "./jobs";
 
 let timer: NodeJS.Timeout | null = null;
 
-export function computeNextRun(cron: string, from = new Date()): Date | null {
+export function computeNextRun(
+  cron: string,
+  from = new Date(),
+  timezone = config.timezone,
+): Date | null {
   try {
     const interval = parseExpression(cron, {
       currentDate: from,
-      tz: config.timezone,
+      tz: timezone,
     });
     return interval.next().toDate();
   } catch {
     return null;
   }
+}
+
+export async function currentTimezone(): Promise<string> {
+  const settings = await getSettings();
+  return String(settings.timezone || config.timezone);
 }
 
 export async function globalCron(): Promise<string> {
@@ -28,20 +37,25 @@ export async function recomputeProjectSchedule(projectId: number): Promise<void>
   ]);
   const project = rows[0];
   if (!project) return;
-  const cron = project.schedule_cron || (await globalCron());
-  const next = computeNextRun(cron);
+  const settings = await getSettings();
+  const cron = project.schedule_cron || String(settings.globalCron || config.defaultCron);
+  const timezone = String(settings.timezone || config.timezone);
+  const next = computeNextRun(cron, new Date(), timezone);
   await pool.query(`UPDATE projects SET next_run_at = $1 WHERE id = $2`, [
     next,
     projectId,
   ]);
 }
 
-export async function recomputeAllSchedules(): Promise<void> {
-  const cron = await globalCron();
+export async function recomputeAllSchedules(includeOverrides = false): Promise<void> {
+  const settings = await getSettings();
+  const cron = String(settings.globalCron || config.defaultCron);
+  const timezone = String(settings.timezone || config.timezone);
   const { rows } = await pool.query<Project>(`SELECT * FROM projects`);
   for (const project of rows) {
-    if (project.schedule_cron) continue;
-    const next = computeNextRun(cron);
+    if (!includeOverrides && project.schedule_cron) continue;
+    const projectCron = project.schedule_cron || cron;
+    const next = computeNextRun(projectCron, new Date(), timezone);
     await pool.query(`UPDATE projects SET next_run_at = $1 WHERE id = $2`, [
       next,
       project.id,
@@ -50,7 +64,9 @@ export async function recomputeAllSchedules(): Promise<void> {
 }
 
 async function tick(): Promise<void> {
-  const cron = await globalCron();
+  const settings = await getSettings();
+  const cron = String(settings.globalCron || config.defaultCron);
+  const timezone = String(settings.timezone || config.timezone);
   const { rows } = await pool.query<Project>(
     `SELECT * FROM projects WHERE enabled = true`,
   );
@@ -60,7 +76,7 @@ async function tick(): Promise<void> {
     const next = project.next_run_at ? new Date(project.next_run_at) : null;
 
     if (!next) {
-      const computed = computeNextRun(projectCron);
+      const computed = computeNextRun(projectCron, now, timezone);
       await pool.query(`UPDATE projects SET next_run_at = $1 WHERE id = $2`, [
         computed,
         project.id,
@@ -73,7 +89,7 @@ async function tick(): Promise<void> {
         const job = await enqueueProject(project.id, "scheduled");
         if (job) console.log(`Enqueued scheduled backup for ${project.name} (job ${job.id})`);
       }
-      const computed = computeNextRun(projectCron, now);
+      const computed = computeNextRun(projectCron, now, timezone);
       await pool.query(`UPDATE projects SET next_run_at = $1 WHERE id = $2`, [
         computed,
         project.id,

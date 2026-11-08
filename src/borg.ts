@@ -50,7 +50,7 @@ export function borgEnv(project?: Project): NodeJS.ProcessEnv {
     BORG_DELETE_I_KNOW_WHAT_I_AM_DOING: "YES",
     BORG_EXIT_CODES: "modern",
     LANG: "C.UTF-8",
-    TZ: config.timezone,
+    TZ: process.env.TZ || config.timezone,
   };
 }
 

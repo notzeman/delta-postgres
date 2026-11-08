@@ -407,7 +407,12 @@ async function tick(): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
-    while (activeJobs.size < config.concurrency) {
+    const settings = await getSettings();
+    const concurrency = Math.max(
+      1,
+      Number(settings.concurrency || config.concurrency),
+    );
+    while (activeJobs.size < concurrency) {
       const { rows } = await pool.query<{ id: number }>(
         `UPDATE backup_jobs SET status = 'running', started_at = now()
          WHERE id = (

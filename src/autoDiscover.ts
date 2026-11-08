@@ -1,4 +1,5 @@
 import { computeNextRun, globalCron } from "./scheduler";
+import { config } from "./config";
 import {
   audit,
   getIgnoredProjects,
@@ -52,7 +53,11 @@ export async function autoImportDiscoveredProjects(
     return set;
   };
 
-  const nextRun = computeNextRun(cron);
+  const nextRun = computeNextRun(
+    cron,
+    new Date(),
+    String(settings.timezone || config.timezone),
+  );
   let added = 0;
 
   for (const item of discovered) {

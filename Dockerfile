@@ -22,8 +22,7 @@ FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=8080 \
     DATA_DIR=/data \
-    BACKUP_ROOT=/backups \
-    TZ=Asia/Kolkata
+    BACKUP_ROOT=/backups
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

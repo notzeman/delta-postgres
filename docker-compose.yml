@@ -40,7 +40,6 @@ services:
       DATA_DIR: /data
       BACKUP_ROOT: /backups
       PORT: "8080"
-      TZ: ${TZ:-Asia/Kolkata}
     ports:
       - "${DASHBOARD_PORT:-8095}:8080"
     volumes:

@@ -28,4 +28,16 @@ mkdir -p /data /backups
 chown "$APP_UID:$APP_GID" /data /backups 2>/dev/null || true
 umask 0022
 
+# Apply the dashboard-managed timezone to the container environment on restart.
+if [ -n "${DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
+  DB_TIMEZONE="$(psql "$DATABASE_URL" -Atc "SELECT value #>> '{}' FROM settings WHERE key = 'timezone'" 2>/dev/null || true)"
+  if [ -n "$DB_TIMEZONE" ]; then
+    export TZ="$DB_TIMEZONE"
+    if [ -f "/usr/share/zoneinfo/$DB_TIMEZONE" ]; then
+      ln -snf "/usr/share/zoneinfo/$DB_TIMEZONE" /etc/localtime
+      printf '%s\n' "$DB_TIMEZONE" > /etc/timezone
+    fi
+  fi
+fi
+
 exec setpriv --reuid="$APP_UID" --regid="$APP_GID" --init-groups "$@"

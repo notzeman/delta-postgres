@@ -72,14 +72,21 @@ import {
 } from "./jobs";
 import {
   computeNextRun,
-  globalCron,
-  recomputeProjectSchedule,
   recomputeAllSchedules,
 } from "./scheduler";
 import { runCommand, slugify, formatBytes, ensureDir, rmrf } from "./utils";
 
 function sendError(reply: FastifyReply, code: number, message: string) {
   return reply.code(code).send({ error: message });
+}
+
+function isValidTimezone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function projectId(request: FastifyRequest): number {
@@ -168,11 +175,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
   // ---------- Health ----------
   app.get("/api/health", async () => {
+    const settings = await getSettings();
     const checks: Record<string, unknown> = {
       time: new Date().toISOString(),
       appVersion: config.appVersion,
-      timezone: config.timezone,
-      worker: { running: runningJobCount(), concurrency: config.concurrency },
+      timezone: String(settings.timezone || config.timezone),
+      worker: {
+        running: runningJobCount(),
+        concurrency: Number(settings.concurrency || config.concurrency),
+      },
     };
     try {
       await pool.query("SELECT 1");
@@ -755,8 +766,12 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       );
     }
     const pgUser = body.pgUser || info.pgUser;
-    const cron = body.scheduleCron || (await globalCron());
-    if (computeNextRun(cron) === null) return sendError(reply, 400, "Invalid cron expression");
+    const settings = await getSettings();
+    const timezone = String(settings.timezone || config.timezone);
+    const cron = body.scheduleCron || String(settings.globalCron || config.defaultCron);
+    if (computeNextRun(cron, new Date(), timezone) === null) {
+      return sendError(reply, 400, "Invalid cron expression");
+    }
 
     let slug = slugify(body.name);
     const existing = await getProjectBySlug(slug, server.id);
@@ -787,7 +802,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         body.keepMonthly ?? null,
         body.compression || "auto,zstd,3",
         body.notes ?? null,
-        computeNextRun(cron),
+        computeNextRun(cron, new Date(), timezone),
       ],
     );
     await audit(getActor(request), "project.create", rows[0].slug, {
@@ -867,13 +882,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
     const body = parsed.data;
-    if (body.scheduleCron && computeNextRun(body.scheduleCron) === null) {
+    const settings = await getSettings();
+    const timezone = String(settings.timezone || config.timezone);
+    if (body.scheduleCron && computeNextRun(body.scheduleCron, new Date(), timezone) === null) {
       return sendError(reply, 400, "Invalid cron expression");
     }
     const nextRun = body.scheduleCron
-      ? computeNextRun(body.scheduleCron)
+      ? computeNextRun(body.scheduleCron, new Date(), timezone)
       : body.scheduleCron === null
-        ? computeNextRun(await globalCron())
+        ? computeNextRun(
+            String(settings.globalCron || config.defaultCron),
+            new Date(),
+            timezone,
+          )
         : project.next_run_at;
 
     const { rows } = await pool.query<Project>(
@@ -1296,8 +1317,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         keepMonthly: stored.keepMonthly ?? config.keepMonthly,
         notificationWebhook: stored.notificationWebhook ?? "",
         autoAddProjects: stored.autoAddProjects !== false,
-        timezone: config.timezone,
-        concurrency: config.concurrency,
+        timezone: String(stored.timezone || config.timezone),
+        concurrency: Number(stored.concurrency || config.concurrency),
         appVersion: config.appVersion,
         borgVersion: await borgVersion(),
         dockerSocket: config.dockerSocket,
@@ -1314,16 +1335,31 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       keepMonthly: z.number().int().min(0).optional(),
       notificationWebhook: z.string().optional(),
       autoAddProjects: z.boolean().optional(),
+      timezone: z.string().optional(),
+      concurrency: z.number().int().min(1).max(10).optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
-    if (parsed.data.globalCron && computeNextRun(parsed.data.globalCron) === null) {
+    if (parsed.data.timezone && !isValidTimezone(parsed.data.timezone)) {
+      return sendError(reply, 400, "Invalid timezone");
+    }
+    const stored = await getSettings();
+    const timezone = String(parsed.data.timezone || stored.timezone || config.timezone);
+    if (
+      parsed.data.globalCron &&
+      computeNextRun(parsed.data.globalCron, new Date(), timezone) === null
+    ) {
       return sendError(reply, 400, "Invalid cron expression");
     }
     for (const [key, value] of Object.entries(parsed.data)) {
       if (value !== undefined) await setSetting(key, value);
     }
-    if (parsed.data.globalCron) await recomputeAllSchedules();
+    if (parsed.data.timezone) {
+      process.env.TZ = parsed.data.timezone;
+    }
+    if (parsed.data.globalCron || parsed.data.timezone) {
+      await recomputeAllSchedules(true);
+    }
     await audit(getActor(request), "settings.update", undefined, parsed.data);
     return { ok: true };
   });
