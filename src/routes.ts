@@ -1103,6 +1103,38 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
   });
 
+  app.get("/api/projects/:id/archives/:name/databases", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    try {
+      const files = await listArchiveFiles(project, archiveName(request));
+      const databases = files
+        .map((file) => ({
+          ...file,
+          path: file.path.replace(/^\.\//, ""),
+        }))
+        .filter(
+          (file) =>
+            file.type === "file" &&
+            file.path.startsWith("databases/") &&
+            file.path.endsWith(".dump"),
+        )
+        .map((file) => ({
+          name: file.path.slice("databases/".length, -".dump".length),
+          path: file.path,
+          sizeBytes: file.size,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return { databases };
+    } catch (error) {
+      return sendError(
+        reply,
+        500,
+        error instanceof Error ? error.message : "Unable to read archive contents",
+      );
+    }
+  });
+
   app.delete("/api/projects/:id/archives/:name", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
@@ -1145,11 +1177,16 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       .object({
         archive: z.string().min(1),
         database: z.string().min(1),
+        memberPath: z.string().optional(),
         targetDatabase: z.string().regex(/^[a-zA-Z0-9_]+$/, "Use letters, numbers, and underscores"),
         overwrite: z.boolean().optional(),
       })
       .safeParse(request.body);
     if (!body.success) return sendError(reply, 400, body.error.issues[0]?.message || "Invalid body");
+    const memberPath = body.data.memberPath || safeDbFile(body.data.database);
+    if (!memberPath.startsWith("databases/") || memberPath.includes("..")) {
+      return sendError(reply, 400, "Invalid archive member path");
+    }
     const server = await getServer(project.server_id);
     if (!server) return sendError(reply, 404, "Docker server not found");
     const lines: string[] = [];
@@ -1168,7 +1205,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         server,
         container.id,
         body.data.archive,
-        safeDbFile(body.data.database),
+        memberPath,
         body.data.targetDatabase,
         Boolean(body.data.overwrite),
         (line) => lines.push(line),

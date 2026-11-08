@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,7 +22,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { api, downloadUrl, duration, fmtDate, formatBytes, timeAgo } from "../api";
-import type { Archive, Project, ProjectDetailResponse } from "../types";
+import type { Archive, ArchiveDatabase, Project, ProjectDetailResponse } from "../types";
 import {
   Badge,
   Button,
@@ -217,12 +217,6 @@ export default function ProjectDetail() {
     onError: (err) => setError(err instanceof Error ? err.message : "Restore failed"),
   });
 
-  const sourceDbs = useMemo(() => {
-    const fromProject = project?.databases || [];
-    if (fromProject.length) return fromProject;
-    return (container?.databases || []).map((db) => db.name);
-  }, [project?.databases, container?.databases]);
-
   const [restore, setRestore] = useState({
     archive: "",
     database: "",
@@ -241,6 +235,17 @@ export default function ProjectDetail() {
   const [transferDrag, setTransferDrag] = useState(false);
   const [transferResult, setTransferResult] = useState("");
   const [transferError, setTransferError] = useState("");
+
+  const archiveDbsQuery = useQuery({
+    queryKey: ["archive-databases", projectId, restore.archive],
+    queryFn: () =>
+      api<{ databases: ArchiveDatabase[] }>(
+        `/projects/${projectId}/archives/${encodeURIComponent(restore.archive)}/databases`,
+      ),
+    enabled: Boolean(restore.archive),
+  });
+  const archiveDatabases = archiveDbsQuery.data?.databases;
+
   const restoreMutation = useMutation({
     mutationFn: () =>
       api<{ ok: boolean; output: string }>(`/projects/${projectId}/restore`, {
@@ -248,6 +253,7 @@ export default function ProjectDetail() {
         body: JSON.stringify({
           archive: restore.archive,
           database: restore.database,
+          memberPath: archiveDatabases?.find((db) => db.name === restore.database)?.path,
           targetDatabase: restore.target,
           overwrite: restore.overwrite,
         }),
@@ -317,15 +323,20 @@ export default function ProjectDetail() {
       setRestore((current) => ({ ...current, archive: archives[0].name }));
     }
     if (!exportArchive && archives[0]) setExportArchive(archives[0].name);
-    if (!restore.database && sourceDbs[0]) {
-      const db = sourceDbs[0];
-      setRestore((current) => ({
+  }, [archives, exportArchive, restore.archive]);
+
+  useEffect(() => {
+    if (!archiveDatabases || archiveDatabases.length === 0) return;
+    setRestore((current) => {
+      if (archiveDatabases.some((db) => db.name === current.database)) return current;
+      const db = archiveDatabases[0];
+      return {
         ...current,
-        database: db,
-        target: current.target || `restore_${db}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
-      }));
-    }
-  }, [archives, sourceDbs]); // eslint-disable-line react-hooks/exhaustive-deps
+        database: db.name,
+        target: `restore_${db.name}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+      };
+    });
+  }, [archiveDatabases]);
 
   if (projectQuery.isLoading) return <Spinner label="Loading project…" />;
   if (!project) {
@@ -863,7 +874,10 @@ export default function ProjectDetail() {
                   ariaLabel="Archive"
                 />
               </Field>
-              <Field label="Source database">
+              <Field
+                label="Source database"
+                hint="A database dump from inside the selected archive"
+              >
                 <Picker
                   value={restore.database}
                   onChange={(next) => {
@@ -873,16 +887,36 @@ export default function ProjectDetail() {
                       target: `restore_${next}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
                     }));
                   }}
-                  options={sourceDbs.map((db) => ({
-                    value: db,
-                    label: db,
+                  options={(archiveDatabases || []).map((db) => ({
+                    value: db.name,
+                    label: db.name,
+                    description: `${db.path} · ${formatBytes(db.sizeBytes)}`,
                     icon: <Database className="h-4 w-4" />,
                   }))}
-                  placeholder="Select a database…"
+                  placeholder={
+                    archiveDbsQuery.isLoading
+                      ? "Loading archive contents…"
+                      : "Select a database dump…"
+                  }
                   searchable
+                  disabled={!restore.archive || archiveDbsQuery.isLoading}
                   ariaLabel="Source database"
                 />
               </Field>
+              {archiveDbsQuery.isError ? (
+                <ErrorBox
+                  message={
+                    archiveDbsQuery.error instanceof Error
+                      ? archiveDbsQuery.error.message
+                      : "Unable to read archive contents"
+                  }
+                />
+              ) : null}
+              {!archiveDbsQuery.isLoading &&
+              archiveDatabases &&
+              archiveDatabases.length === 0 ? (
+                <ErrorBox message="No database dumps found in this archive." />
+              ) : null}
               <Field label="Target database" hint="A new database is created by default.">
                 <Input
                   value={restore.target}
@@ -941,6 +975,7 @@ export default function ProjectDetail() {
                     !restore.archive ||
                     !restore.database ||
                     !restore.target ||
+                    !archiveDatabases?.some((db) => db.name === restore.database) ||
                     (restore.overwrite && restore.confirm !== restore.target)
                   }
                 >

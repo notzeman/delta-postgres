@@ -223,8 +223,10 @@ The dashboard's metadata lives in the `dashboard-db` Postgres container and is e
 
 Open a project → **Restore**:
 
-- Choose an archive and source database.
+- Choose an archive. The **Source database** list is read directly from that archive’s `databases/*.dump` files.
+- **Source database** is the dump to extract; **Target database** is where it is restored in the current PostgreSQL container.
 - The default target is a new database: `restore_<db>_<date>`.
+- The project container is re-resolved automatically before restore.
 - Enabling **Overwrite** terminates connections, drops the target, and requires typing the target name.
 - The dump is extracted from Borg and piped into `pg_restore` inside the container.
 
@@ -407,7 +409,7 @@ Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is pres
 A previous run may still hold a lock. Check `docker compose logs dashboard`, then run `borg break-lock <repo>` in the container.
 
 **Restore fails with a missing member path**
-The archive layout is `databases/<name>.dump`; use the UI's source-database list. Borg paths with a leading `./` are handled automatically.
+The restore form lists databases from the selected archive itself. Pick a source database from that list; the exact `databases/<name>.dump` member is sent to the backend.
 
 **Dashboard can't reach Docker**
 Verify the runtime process ownership and group membership:

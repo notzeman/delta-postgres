@@ -48,6 +48,12 @@ export interface Archive {
   verified_at: string | null;
 }
 
+export interface ArchiveDatabase {
+  name: string;
+  path: string;
+  sizeBytes: number;
+}
+
 export interface Job {
   id: number;
   project_id: number;
