@@ -1,9 +1,31 @@
 #!/bin/sh
 set -eu
 
-APP_UID="${APP_UID:-1000}"
-APP_GID="${APP_GID:-1000}"
-DOCKER_GID="${DOCKER_GID:-988}"
+# Optional overrides. If not provided, detect the host-side owner of the
+# bind-mounted data directories and the GID of the mounted Docker socket.
+DETECTED_UID=""
+DETECTED_GID=""
+for candidate in /data /backups; do
+  if [ -d "$candidate" ]; then
+    candidate_uid="$(stat -c '%u' "$candidate" 2>/dev/null || echo '')"
+    candidate_gid="$(stat -c '%g' "$candidate" 2>/dev/null || echo '')"
+    if [ -n "$candidate_uid" ] && [ "$candidate_uid" != "0" ]; then
+      DETECTED_UID="$candidate_uid"
+      DETECTED_GID="$candidate_gid"
+      break
+    fi
+  fi
+done
+if [ -z "$DETECTED_UID" ]; then
+  DETECTED_UID=1000
+  DETECTED_GID=1000
+fi
+
+APP_UID="${APP_UID:-$DETECTED_UID}"
+APP_GID="${APP_GID:-$DETECTED_GID}"
+DOCKER_GID="${DOCKER_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 988)}"
+
+echo "Runtime identity: uid=${APP_UID} gid=${APP_GID} docker_gid=${DOCKER_GID}"
 
 # Ensure the runtime GID exists.
 if ! getent group "$APP_GID" >/dev/null 2>&1; then

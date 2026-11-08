@@ -459,10 +459,14 @@ export default function Projects() {
   const [prefill, setPrefill] = useState<DiscoveredProject | null>(null);
   const [actionError, setActionError] = useState("");
   const serverQuery = serverFilter === "all" ? "" : `?serverId=${serverFilter}`;
+  const projectsParams = new URLSearchParams();
+  if (serverFilter !== "all") projectsParams.set("serverId", serverFilter);
+  projectsParams.set("includeIgnored", "1");
 
   const projectsQuery = useQuery({
-    queryKey: ["projects", serverFilter],
-    queryFn: () => api<{ projects: Project[] }>(`/projects${serverQuery}`),
+    queryKey: ["projects", serverFilter, "all"],
+    queryFn: () =>
+      api<{ projects: Project[] }>(`/projects?${projectsParams.toString()}`),
     staleTime: 30_000,
     refetchOnMount: false,
   });
@@ -514,15 +518,34 @@ export default function Projects() {
     onError: (err) => setActionError(err instanceof Error ? err.message : "Remove failed"),
   });
 
-  const projects = projectsQuery.data?.projects || [];
+  const restoreProject = useMutation({
+    mutationFn: (id: number) =>
+      api(`/projects/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ignored: false }),
+      }),
+    onSuccess: () => {
+      setActionError("");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["discovery"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (err) => setActionError(err instanceof Error ? err.message : "Restore failed"),
+  });
+
+  const allProjects = projectsQuery.data?.projects || [];
+  const managedProjects = allProjects.filter((project) => !project.ignored);
+  const ignoredDbProjects = allProjects.filter((project) => project.ignored);
   const discovered = discoveryQuery.data?.projects || [];
   const servers = serversQuery.data?.servers || [];
   const summary = discoveryQuery.data?.summary || { total: 0, withPostgres: 0 };
   const autoAdd = discoveryQuery.data?.autoAddProjects !== false;
-  const ignoredProjects = useMemo(
-    () => discovered.filter((project) => project.ignored),
+  const ignoredDiscovered = useMemo(
+    () => discovered.filter((project) => project.ignored && !project.managedProjectId),
     [discovered],
   );
+  const ignoredCount = ignoredDbProjects.length + ignoredDiscovered.length;
   const otherCompose = useMemo(
     () => (discoveryQuery.data?.composeProjects || []).filter((project) => !project.hasPostgres),
     [discoveryQuery.data?.composeProjects],
@@ -592,9 +615,9 @@ export default function Projects() {
 
       <Tabs
         tabs={[
-          { id: "managed", label: "Managed", count: projects.length },
+          { id: "managed", label: "Managed", count: managedProjects.length },
           { id: "detected", label: "Detected", count: detectable.length },
-          { id: "ignored", label: "Ignored", count: ignoredProjects.length },
+          { id: "ignored", label: "Ignored", count: ignoredCount },
         ]}
         active={tab}
         onChange={setTab}
@@ -603,7 +626,7 @@ export default function Projects() {
       {tab === "managed" ? (
         projectsQuery.isLoading ? (
           <Spinner />
-        ) : projects.length === 0 ? (
+        ) : managedProjects.length === 0 ? (
           <Card>
             <EmptyState
               icon={<Database className="h-8 w-8" />}
@@ -618,7 +641,7 @@ export default function Projects() {
           </Card>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {projects.map((project) => (
+            {managedProjects.map((project) => (
               <Card key={project.id} className="flex flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -694,7 +717,7 @@ export default function Projects() {
                       onClick={() => {
                         if (
                           window.confirm(
-                            `Remove ${project.name}? The Borg repository stays on disk, and this compose project will be ignored so auto-discovery does not re-add it.`,
+                            `Move ${project.name} to Ignored? Its archives, jobs, and Borg repository are kept, and auto-discovery will not re-add it.`,
                           )
                         ) {
                           removeProject.mutate(project.id);
@@ -821,58 +844,102 @@ export default function Projects() {
         </div>
       ) : (
         <div className="space-y-4">
-          {ignoredProjects.length === 0 ? (
+          {ignoredCount === 0 ? (
             <Card>
               <EmptyState
                 icon={<Undo2 className="h-8 w-8" />}
                 title="No ignored projects"
-                description="Projects you remove are ignored so auto-discovery does not re-add them. They will appear here."
+                description="Projects you move to Ignored stay here with their archives, jobs, and Borg repository intact."
               />
             </Card>
           ) : (
-            ignoredProjects.map((project) => (
-              <Card key={project.key} className="p-5">
-                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-semibold text-slate-100">{project.name}</h3>
-                      <Badge tone="blue">{project.serverName}</Badge>
-                      <Badge tone="neutral">ignored</Badge>
-                      <StatusBadge status={project.status} />
+            <>
+              {ignoredDbProjects.map((project) => (
+                <Card key={`db-${project.id}`} className="p-5">
+                  <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-100">{project.name}</h3>
+                        <Badge tone="blue">{project.server_name || "local"}</Badge>
+                        <Badge tone="neutral">ignored</Badge>
+                        <StatusBadge status={project.last_status} />
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {project.container_name || "no container"} ·{" "}
+                        {project.archiveCount ?? 0} archives · {formatBytes(project.repoBytes)}
+                      </p>
+                      {project.compose_project ? (
+                        <p className="mt-1 font-mono text-[11px] text-slate-500">
+                          {project.compose_project}
+                        </p>
+                      ) : null}
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {project.containers.map((c) => c.name).join(", ")} ·{" "}
-                      {project.workingDir || "compose project"}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {project.databases.map((db) => (
-                        <Badge key={db} tone="neutral">
-                          {db}
-                        </Badge>
-                      ))}
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <Link
+                        to={`/projects/${project.id}`}
+                        className="btn-secondary text-xs"
+                      >
+                        Open
+                      </Link>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => restoreProject.mutate(project.id)}
+                        loading={
+                          restoreProject.isPending && restoreProject.variables === project.id
+                        }
+                      >
+                        <Undo2 className="h-3.5 w-3.5" /> Restore
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        ignoreMutation.mutate({
-                          serverId: project.serverId,
-                          composeProject: discoveryIgnoreKey(project),
-                          ignore: false,
-                        })
-                      }
-                    >
-                      <Undo2 className="h-3.5 w-3.5" /> Unignore
-                    </Button>
-                    <Button size="sm" variant="primary" onClick={() => openAdd(project)}>
-                      <Plus className="h-3.5 w-3.5" /> Add
-                    </Button>
+                </Card>
+              ))}
+
+              {ignoredDiscovered.map((project) => (
+                <Card key={project.key} className="p-5">
+                  <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-100">{project.name}</h3>
+                        <Badge tone="blue">{project.serverName}</Badge>
+                        <Badge tone="neutral">ignored</Badge>
+                        <StatusBadge status={project.status} />
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {project.containers.map((c) => c.name).join(", ")} ·{" "}
+                        {project.workingDir || "compose project"}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {project.databases.map((db) => (
+                          <Badge key={db} tone="neutral">
+                            {db}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          ignoreMutation.mutate({
+                            serverId: project.serverId,
+                            composeProject: discoveryIgnoreKey(project),
+                            ignore: false,
+                          })
+                        }
+                      >
+                        <Undo2 className="h-3.5 w-3.5" /> Unignore
+                      </Button>
+                      <Button size="sm" variant="primary" onClick={() => openAdd(project)}>
+                        <Plus className="h-3.5 w-3.5" /> Add
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </Card>
-            ))
+                </Card>
+              ))}
+            </>
           )}
         </div>
       )}

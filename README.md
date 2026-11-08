@@ -19,7 +19,7 @@ PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
 - **Multi-server support** — connect remote Docker Engine APIs over TCP or TLS, and scope projects, discovery, schedules, and backups by server.
 - **Automatic project import** — PostgreSQL Compose projects are added to the dashboard automatically; new projects are picked up on rescan and every few minutes.
 - **Manual onboarding** — add containers the scan misses, with live database/user detection.
-- **Remove & ignore** — remove a project from the list; it is ignored so auto-discovery does not re-add it. Restore ignored projects from the Projects page.
+- **Move to Ignored** — “removing” a project moves it to Ignored, preserving its archives, jobs, and Borg repository. Restore it from the Projects page.
 - **Global + per-project schedules** — cron presets or custom expressions, next-run preview, persistent queue.
 - **Manual backups** — one project or every enabled project.
 - **Borg repositories** — one encrypted repo per project, zstd compression, block-level delta storage.
@@ -39,6 +39,17 @@ PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
 
 A server with Docker installed, ofc.
 
+### Runtime permissions
+
+The entrypoint runs as root only long enough to:
+
+- Detect the owner of `./data` or `./backups` and run the app as that UID/GID.
+- Detect the GID of `/var/run/docker.sock` and add the app user to it.
+- Chown `./data` and `./backups` if needed.
+- Drop privileges before starting the dashboard.
+
+So `APP_UID`, `APP_GID`, and `DOCKER_GID` are **not required** in `.env`. They remain optional overrides for rootless Docker, custom sockets, or unusual host ownership.
+
 ---
 
 ## Quick start
@@ -49,7 +60,7 @@ cd delta-postgres
 
 cp .env.example .env
 # Edit .env: set SESSION_SECRET, DASHBOARD_DB_PASSWORD, BORG_PASSPHRASE
-# Set APP_UID/APP_GID to your user (id -u / id -g) and DOCKER_GID (getent group docker)
+# UID/GID and the Docker socket GID are auto-detected by the entrypoint.
 
 mkdir -p data backups
 docker compose up -d --build
@@ -114,9 +125,9 @@ The CLI reads `DATABASE_URL` from the environment. If no admin user exists yet, 
 2. Open **Projects**. PostgreSQL Compose projects are auto-added to **Managed**; projects without PostgreSQL are listed under **Detected → Other Compose projects**.
 3. Open a project and review its databases, PostgreSQL user, schedule, and retention.
 4. Click **Backup now** to create the first archive.
-5. Use **Detected** for a full Compose scan, **Ignored** to restore removed projects, or **Add project** for manual onboarding.
+5. Use **Detected** for a full Compose scan, **Ignored** to restore moved projects, or **Add project** for manual onboarding.
 
-To remove a project, use the trash button on its card. The Borg repository is kept on disk, and the Compose project is ignored so the next scan will not re-add it.
+To move a project to **Ignored**, use the trash button on its card. Its archives, jobs, and Borg repository are kept, and the next scan will not re-add it. Restore it from the **Ignored** tab.
 
 Useful Docker labels:
 
@@ -136,7 +147,7 @@ Every Docker Compose project on each connected server is scanned. Projects conta
 - Opening the **Managed** tab does **not** trigger a scan. Discovery runs only on **Rescan** or when you open **Detected/Ignored**.
 - Compose projects without a PostgreSQL service are shown under **Projects → Detected → Other Compose projects**.
 - Auto-add can be disabled in **Settings → Global defaults**.
-- Use the trash button on a project card to **remove** it. The encrypted Borg repository stays on disk; the Compose project is added to the ignore list so it is not auto-added again.
+- Use the trash button on a project card to **move it to Ignored**. Its archives, jobs, and Borg repository stay intact, and the Compose project is added to the ignore list so it is not auto-added again.
 - Open **Projects → Ignored** to unignore a project or add it back manually.
 
 ---
@@ -236,20 +247,56 @@ Open a project and use the **Import / export** tab to download its full reposito
 
 ## Configuration
 
-Admin users live in the metadata PostgreSQL database and are managed with the CLI, not environment variables. All other settings are environment variables (see `.env.example`):
+Admin users live in the metadata PostgreSQL database and are managed with the CLI, not environment variables. Global schedule, timezone, concurrency, retention, the notification webhook, and auto-add behavior are configured in the dashboard **Settings** page.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `SESSION_SECRET` | generated file | JWT signing |
-| `SECRETS_KEY` | `SESSION_SECRET` | Encrypts stored Docker TLS credentials |
-| `DASHBOARD_DB_PASSWORD` | — | Metadata Postgres password |
-| `BORG_PASSPHRASE` | generated file | Borg repo encryption |
-| `DASHBOARD_PORT` | `8095` | Published port |
-| `APP_UID` / `APP_GID` | `1001` | Container runtime user; must own `./data` and `./backups` |
-| `DOCKER_GID` | `988` | Host Docker group GID |
-| `COOKIE_SECURE` | `false` | Set `true` behind HTTPS |
+### `.env` reference
 
-Global schedule, timezone, concurrency, retention, the notification webhook, and auto-add behavior are configured in the dashboard **Settings** page. Per-project cron and retention override the globals.
+| Variable | Required | Purpose | Generate / set |
+|---|---|---|---|
+| `SESSION_SECRET` | Yes | Signs login JWT cookies | `openssl rand -hex 32` |
+| `DASHBOARD_DB_PASSWORD` | Yes | Password for the dashboard’s own Postgres | `openssl rand -hex 24` |
+| `BORG_PASSPHRASE` | Yes | Encrypts every Borg repository | `openssl rand -hex 32` |
+| `SECRETS_KEY` | Yes | Encrypts stored remote Docker TLS credentials | `openssl rand -hex 32` |
+| `COOKIE_SECURE` | No | Set `true` when serving the dashboard over HTTPS | `false` / `true` |
+| `DASHBOARD_PORT` | No | Host port published by Compose | `8095` or any free port |
+
+Generate a complete `.env`:
+
+```bash
+cat > .env <<EOF
+SESSION_SECRET=$(openssl rand -hex 32)
+DASHBOARD_DB_PASSWORD=$(openssl rand -hex 24)
+BORG_PASSPHRASE=$(openssl rand -hex 32)
+SECRETS_KEY=$(openssl rand -hex 32)
+COOKIE_SECURE=false
+DASHBOARD_PORT=8095
+EOF
+
+chmod 600 .env
+```
+
+### Optional overrides
+
+| Variable | Default | Purpose | Set with |
+|---|---|---|---|
+| `APP_UID` / `APP_GID` | auto-detected | Runtime UID/GID | `id -u` / `id -g` |
+| `DOCKER_GID` | socket GID | Docker socket group | `stat -c '%g' /var/run/docker.sock` |
+| `PORT` | `8080` | Container HTTP port | any free container port |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path | custom socket path |
+| `LOG_LEVEL` | `info` | API log verbosity | `debug`, `info`, `warn`, `error` |
+| `DATABASE_URL` | Compose-built | External metadata database | `postgres://user:pass@host:5432/db` |
+| `DATA_DIR` | `/data` | Runtime state directory | set by Compose |
+| `BACKUP_ROOT` | `/backups` | Borg repository root | set by Compose |
+
+`APP_UID`, `APP_GID`, and `DOCKER_GID` are **not needed** normally. The entrypoint detects them from `./data` ownership and the mounted Docker socket. Override them only for rootless Docker, a custom socket, or unusual host ownership.
+
+### Secret handling
+
+- `.env` is gitignored. Keep it `chmod 600`.
+- **`BORG_PASSPHRASE` is unrecoverable if lost** — store it in a password manager or offline vault. Changing it does not re-encrypt existing repositories.
+- **`SECRETS_KEY`** must remain stable. Changing it invalidates stored remote Docker TLS certificates; re-enter them in **Servers**.
+- **`SESSION_SECRET`** rotation logs everyone out.
+- **`DASHBOARD_DB_PASSWORD`** must match the actual Postgres role. If you change it after the database volume exists, update the role inside `dashboard-db` as well.
 
 ---
 
@@ -347,7 +394,7 @@ docker compose exec dashboard npm run reset-admin
 ```
 
 **`permission denied` on `/var/run/docker.sock`**
-Set `DOCKER_GID` to the host's docker GID: `getent group docker`.
+The entrypoint auto-detects the socket GID. If you use a custom Docker socket or rootless Docker, set `DOCKER_GID` explicitly and recreate the container.
 
 **`pg_dump: error: connection ... role ... does not exist`**
 Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is present in the container.
@@ -359,13 +406,13 @@ A previous run may still hold a lock. Check `docker compose logs dashboard`, the
 The archive layout is `databases/<name>.dump`; use the UI's source-database list. Borg paths with a leading `./` are handled automatically.
 
 **Dashboard can't reach Docker**
-Verify the socket mount and the runtime process groups:
+Verify the runtime process ownership and group membership:
 
 ```bash
-docker compose exec dashboard cat /proc/1/status | grep -E 'Uid|Gid|Groups'
+docker compose exec dashboard sh -c 'grep -E "^(Uid|Gid|Groups)" /proc/1/status'
 ```
 
-The process should run as `APP_UID` and include `DOCKER_GID`. The entrypoint creates the runtime user and joins the Docker group automatically.
+The process should run as the owner of `./data` and include the Docker socket GID. The entrypoint creates the runtime user and joins the Docker group automatically.
 
 **Remote Docker server is offline**
 Check that the Docker Engine API is reachable from the dashboard container, the host/port are correct, and TLS certificates match. Plain `http` requires the API to be exposed on port 2375; `https` uses 2376. Use **Servers → Test** to inspect the exact error.

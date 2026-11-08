@@ -3,7 +3,7 @@ import { config } from "./config";
 import {
   audit,
   getIgnoredProjects,
-  getProjects,
+  getAllProjects,
   getSettings,
   pool,
 } from "./db";
@@ -22,7 +22,7 @@ export async function autoImportDiscoveredProjects(
   const settings = await getSettings();
   if (settings.autoAddProjects === false) return 0;
 
-  const [projects, cron] = await Promise.all([getProjects(), globalCron()]);
+  const [projects, cron] = await Promise.all([getAllProjects(), globalCron()]);
   const managedContainers = new Map<number, Set<string>>();
   const managedCompose = new Map<number, Set<string>>();
   const managedSlugs = new Map<number, Set<string>>();

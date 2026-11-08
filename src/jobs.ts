@@ -111,11 +111,11 @@ export async function enqueueAll(
 ): Promise<BackupJob[]> {
   const { rows } = serverId
     ? await pool.query<Project>(
-        `SELECT * FROM projects WHERE enabled = true AND server_id = $1 ORDER BY name`,
+        `SELECT * FROM projects WHERE enabled = true AND ignored = false AND server_id = $1 ORDER BY name`,
         [serverId],
       )
     : await pool.query<Project>(
-        `SELECT * FROM projects WHERE enabled = true ORDER BY name`,
+        `SELECT * FROM projects WHERE enabled = true AND ignored = false ORDER BY name`,
       );
   const jobs: BackupJob[] = [];
   for (const project of rows) {

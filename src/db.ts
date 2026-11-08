@@ -18,6 +18,7 @@ export interface Project {
   slug: string;
   source: string;
   enabled: boolean;
+  ignored: boolean;
   container_id: string | null;
   container_name: string | null;
   container_image: string | null;
@@ -120,6 +121,7 @@ export async function ensureSchema(): Promise<void> {
       slug TEXT NOT NULL UNIQUE,
       source TEXT NOT NULL DEFAULT 'auto',
       enabled BOOLEAN NOT NULL DEFAULT true,
+      ignored BOOLEAN NOT NULL DEFAULT false,
       container_id TEXT,
       container_name TEXT,
       container_image TEXT,
@@ -218,6 +220,9 @@ export async function ensureSchema(): Promise<void> {
   await pool.query(
     `ALTER TABLE projects ADD COLUMN IF NOT EXISTS server_id INTEGER REFERENCES servers(id) ON DELETE CASCADE`,
   );
+  await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT false`,
+  );
   await pool.query(`UPDATE projects SET server_id = $1 WHERE server_id IS NULL`, [
     localId,
   ]);
@@ -267,16 +272,31 @@ export async function initDb(): Promise<void> {
   );
 }
 
-export async function getProjects(serverId?: number): Promise<Project[]> {
+export async function getProjects(
+  serverId?: number,
+  includeIgnored = false,
+): Promise<Project[]> {
+  const params: any[] = [];
+  const conditions: string[] = [];
+  if (serverId) {
+    params.push(serverId);
+    conditions.push(`p.server_id = $${params.length}`);
+  }
+  if (!includeIgnored) conditions.push(`p.ignored = false`);
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const { rows } = await pool.query<Project>(
     `SELECT p.*, s.name AS server_name, s.slug AS server_slug, s.type AS server_type,
             s.host AS server_host, s.port AS server_port
      FROM projects p JOIN servers s ON s.id = p.server_id
-     ${serverId ? "WHERE p.server_id = $1" : ""}
+     ${where}
      ORDER BY s.name ASC, p.name ASC`,
-    serverId ? [serverId] : [],
+    params,
   );
   return rows;
+}
+
+export async function getAllProjects(serverId?: number): Promise<Project[]> {
+  return getProjects(serverId, true);
 }
 
 export async function getProject(id: number): Promise<Project | null> {

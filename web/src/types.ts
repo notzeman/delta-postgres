@@ -10,6 +10,7 @@ export interface Project {
   slug: string;
   source: string;
   enabled: boolean;
+  ignored: boolean;
   container_id: string | null;
   container_name: string | null;
   container_image: string | null;

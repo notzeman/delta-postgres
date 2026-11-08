@@ -195,10 +195,26 @@ export default function ProjectDetail() {
     mutationFn: () => api(`/projects/${projectId}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["discovery"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       navigate("/projects");
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "Delete failed"),
+    onError: (err) => setError(err instanceof Error ? err.message : "Remove failed"),
+  });
+
+  const restoreProject = useMutation({
+    mutationFn: () =>
+      api(`/projects/${projectId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ignored: false }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["discovery"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Restore failed"),
   });
 
   const sourceDbs = useMemo(() => {
@@ -318,6 +334,7 @@ export default function ProjectDetail() {
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-2xl font-semibold tracking-tight text-slate-100">{project.name}</h2>
             <StatusBadge status={project.last_status} />
+            {project.ignored ? <Badge tone="neutral">ignored</Badge> : null}
             {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
           </div>
           <p className="mt-1 text-sm text-slate-500">
@@ -326,14 +343,24 @@ export default function ProjectDetail() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            onClick={() => backupNow.mutate()}
-            variant="primary"
-            loading={backupNow.isPending}
-            disabled={!project.enabled}
-          >
-            <Play className="h-4 w-4" /> Backup now
-          </Button>
+          {project.ignored ? (
+            <Button
+              onClick={() => restoreProject.mutate()}
+              variant="primary"
+              loading={restoreProject.isPending}
+            >
+              <RotateCcw className="h-4 w-4" /> Restore project
+            </Button>
+          ) : (
+            <Button
+              onClick={() => backupNow.mutate()}
+              variant="primary"
+              loading={backupNow.isPending}
+              disabled={!project.enabled}
+            >
+              <Play className="h-4 w-4" /> Backup now
+            </Button>
+          )}
           <a href={downloadUrl(`/projects/${project.id}/export`)} className="btn-secondary">
             <Download className="h-4 w-4" /> Export repo
           </a>
@@ -986,27 +1013,27 @@ export default function ProjectDetail() {
 
           <Card className="h-fit border-rose-500/20">
             <CardHeader
-              title="Danger zone"
-              subtitle="Removing a project does not delete its Borg repository files"
+              title="Move to Ignored"
+              subtitle="Archives, jobs, and the Borg repository are kept"
             />
             <div className="space-y-3 p-5">
               <p className="text-xs text-slate-500">
-                The project, its jobs, and archive catalog entries are removed. The encrypted repo
-                stays at <span className="font-mono text-slate-400">/backups/{project.slug}</span>.
+                This project moves to the <strong>Ignored</strong> section. Its archives, jobs, and
+                encrypted Borg repository stay intact, and it will not be auto-discovered again.
               </p>
               <Button
                 variant="danger"
                 onClick={() => {
                   if (
                     window.confirm(
-                      `Delete project ${project.name}? The Borg repository will remain on disk.`,
+                      `Move ${project.name} to Ignored? Its archives, jobs, and Borg repository will be kept.`,
                     )
                   )
                     deleteProject.mutate();
                 }}
                 loading={deleteProject.isPending}
               >
-                <Trash2 className="h-4 w-4" /> Delete project
+                <Trash2 className="h-4 w-4" /> Move to Ignored
               </Button>
             </div>
           </Card>

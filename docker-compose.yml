@@ -46,10 +46,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backups:/backups
       - ./data:/data
-    # The entrypoint creates the runtime UID/GID, joins the Docker group, and
-    # drops privileges with gosu. Set APP_UID/APP_GID to the owner of the bind mounts.
-    group_add:
-      - "${DOCKER_GID:-988}"
+    # The entrypoint auto-detects UID/GID from ./data ownership and the Docker
+    # socket group. APP_UID/APP_GID/DOCKER_GID remain optional overrides.
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 30s

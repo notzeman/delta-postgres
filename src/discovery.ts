@@ -6,7 +6,7 @@ import {
   type ContainerInfo,
 } from "./docker";
 import {
-  getProjects,
+  getAllProjects,
   getIgnoredProjects,
   type Project,
   type ServerRow,
@@ -75,7 +75,7 @@ function pgDefaultDbFor(container: ContainerInfo, user: string): string | null {
 export async function discoverProjects(server: ServerRow): Promise<DiscoveredProject[]> {
   const [containers, projects, ignored] = await Promise.all([
     listAllContainers(server),
-    getProjects(),
+    getAllProjects(),
     getIgnoredProjects(server.id),
   ]);
 
@@ -155,6 +155,7 @@ export async function discoverProjects(server: ServerRow): Promise<DiscoveredPro
 
     // Do not auto-detect compose projects that only have an explicitly ignored label.
     const ignoredFlag =
+      Boolean(managed?.ignored) ||
       ignoredSet.has(key) ||
       (!!composeProject && ignoredSet.has(composeProject)) ||
       groupContainers.some((c) => ignoredSet.has(c.name)) ||

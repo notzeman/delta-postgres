@@ -72,6 +72,7 @@ import {
 } from "./jobs";
 import {
   computeNextRun,
+  recomputeProjectSchedule,
   recomputeAllSchedules,
 } from "./scheduler";
 import { runCommand, slugify, formatBytes, ensureDir, rmrf } from "./utils";
@@ -221,7 +222,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.get("/api/servers", async () => {
     const servers = await listServers();
     const counts = await pool.query<{ server_id: number; count: string }>(
-      `SELECT server_id, count(*)::text AS count FROM projects GROUP BY server_id`,
+      `SELECT server_id, count(*)::text AS count FROM projects
+       WHERE ignored = false GROUP BY server_id`,
     );
     const countMap = new Map(counts.rows.map((row) => [row.server_id, Number(row.count)]));
     const result = await Promise.all(
@@ -686,7 +688,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   // ---------- Projects ----------
   app.get("/api/projects", async (request) => {
     const serverId = queryServerId(request);
-    const projects = await getProjects(serverId);
+    const includeIgnored = (request.query as any)?.includeIgnored === "1";
+    const projects = await getProjects(serverId, includeIgnored);
     const servers = await listServers();
     const serverMap = new Map(servers.map((server) => [server.id, server]));
     const containersByServer = new Map<number, any[]>();
@@ -869,6 +872,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const schema = z.object({
       name: z.string().min(1).max(120).optional(),
       enabled: z.boolean().optional(),
+      ignored: z.boolean().optional(),
       pgUser: z.string().optional(),
       pgDefaultDb: z.string().nullable().optional(),
       databases: z.array(z.string()).nullable().optional(),
@@ -902,8 +906,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         name = $1, enabled = $2, pg_user = $3, pg_default_db = $4,
         databases = $5, schedule_cron = $6, keep_daily = $7, keep_weekly = $8,
         keep_monthly = $9, compression = $10, notes = $11, next_run_at = $12,
-        updated_at = now()
-       WHERE id = $13 RETURNING *`,
+        ignored = $13, updated_at = now()
+       WHERE id = $14 RETURNING *`,
       [
         body.name ?? project.name,
         body.enabled ?? project.enabled,
@@ -923,17 +927,41 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         body.compression ?? project.compression,
         body.notes === undefined ? project.notes : body.notes,
         nextRun,
+        body.ignored === undefined ? project.ignored : body.ignored,
         project.id,
       ],
     );
+    const ignoreKey = project.compose_project || project.container_name;
+    if (body.ignored === false) {
+      if (ignoreKey) {
+        await pool.query(
+          `DELETE FROM ignored_projects WHERE server_id = $1 AND compose_project = $2`,
+          [project.server_id, ignoreKey],
+        );
+      }
+      await recomputeProjectSchedule(project.id);
+    } else if (body.ignored === true && ignoreKey) {
+      await pool.query(
+        `INSERT INTO ignored_projects(server_id, compose_project) VALUES($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [project.server_id, ignoreKey],
+      );
+    }
     await audit(getActor(request), "project.update", project.slug, body);
-    return { project: rows[0] };
+    const updated = await getProject(project.id);
+    return { project: updated || rows[0] };
   });
 
   app.delete("/api/projects/:id", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
-    // Remember the decision so auto-discovery does not immediately re-add it.
+    // Soft-delete: keep the project, archives, jobs, and repository so it can
+    // be restored from the Ignored section.
+    await pool.query(
+      `UPDATE projects SET ignored = true, updated_at = now() WHERE id = $1`,
+      [project.id],
+    );
+    // Remember the decision so auto-discovery does not re-add it.
     const ignoreKey = project.compose_project || project.container_name;
     if (ignoreKey) {
       await pool.query(
@@ -942,13 +970,12 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         [project.server_id, ignoreKey],
       );
     }
-    await pool.query(`DELETE FROM projects WHERE id = $1`, [project.id]);
-    await audit(getActor(request), "project.delete", project.slug, {
+    await audit(getActor(request), "project.ignore", project.slug, {
       ignored: ignoreKey ? [ignoreKey] : [],
     });
     return {
       ok: true,
-      note: "Project removed. Its compose project was ignored so auto-discovery will not re-add it. Borg repository files were kept on disk.",
+      note: "Project moved to Ignored. Its archives, jobs, and Borg repository were kept.",
     };
   });
 
@@ -956,6 +983,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.post("/api/projects/:id/backup", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
+    if (project.ignored) return sendError(reply, 400, "Project is in the Ignored section. Restore it first.");
     if (!project.enabled) return sendError(reply, 400, "Project is disabled");
     const job = await createJob(project.id, "manual");
     await audit(getActor(request), "backup.manual", project.slug, { job: job.id });

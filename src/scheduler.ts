@@ -68,7 +68,7 @@ async function tick(): Promise<void> {
   const cron = String(settings.globalCron || config.defaultCron);
   const timezone = String(settings.timezone || config.timezone);
   const { rows } = await pool.query<Project>(
-    `SELECT * FROM projects WHERE enabled = true`,
+    `SELECT * FROM projects WHERE enabled = true AND ignored = false`,
   );
   const now = new Date();
   for (const project of rows) {
