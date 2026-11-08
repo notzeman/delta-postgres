@@ -28,19 +28,22 @@ import {
   Button,
   Card,
   CardHeader,
+  Checkbox,
   EmptyState,
   ErrorBox,
   Field,
   Input,
-  Select,
   Spinner,
   StatusBadge,
   SuccessBox,
+  Switch,
   Tabs,
   Textarea,
   cn,
 } from "../components/ui";
 import CronField from "../components/CronField";
+import Picker from "../components/Picker";
+import Tooltip from "../components/Tooltip";
 import JobLogModal from "../components/JobLogModal";
 
 function DetailStat({
@@ -213,6 +216,15 @@ export default function ProjectDetail() {
   });
   const [restoreOutput, setRestoreOutput] = useState("");
   const [restoreError, setRestoreError] = useState("");
+  const [exportArchive, setExportArchive] = useState("");
+  const [transferMode, setTransferMode] = useState("archive");
+  const [transferArchive, setTransferArchive] = useState(
+    `imported-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+  );
+  const [transferFile, setTransferFile] = useState<File | null>(null);
+  const [transferDrag, setTransferDrag] = useState(false);
+  const [transferResult, setTransferResult] = useState("");
+  const [transferError, setTransferError] = useState("");
   const restoreMutation = useMutation({
     mutationFn: () =>
       api<{ ok: boolean; output: string }>(`/projects/${projectId}/restore`, {
@@ -235,10 +247,37 @@ export default function ProjectDetail() {
     },
   });
 
+  const importMutation = useMutation({
+    mutationFn: async () => {
+      if (!transferFile) throw new Error("Choose a .tar file first");
+      const form = new FormData();
+      form.append("projectId", String(projectId));
+      form.append("mode", transferMode);
+      if (transferMode === "archive") form.append("archiveName", transferArchive);
+      form.append("file", transferFile);
+      return api<{ ok: boolean; output: string }>("/import", {
+        method: "POST",
+        body: form,
+      });
+    },
+    onSuccess: (data) => {
+      setTransferResult(data.output || "Import completed successfully.");
+      setTransferError("");
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+    },
+    onError: (err) => {
+      setTransferResult("");
+      setTransferError(err instanceof Error ? err.message : "Import failed");
+    },
+  });
+
   useEffect(() => {
     if (!restore.archive && archives[0]) {
       setRestore((current) => ({ ...current, archive: archives[0].name }));
     }
+    if (!exportArchive && archives[0]) setExportArchive(archives[0].name);
     if (!restore.database && sourceDbs[0]) {
       const db = sourceDbs[0];
       setRestore((current) => ({
@@ -298,6 +337,9 @@ export default function ProjectDetail() {
           <a href={downloadUrl(`/projects/${project.id}/export`)} className="btn-secondary">
             <Download className="h-4 w-4" /> Export repo
           </a>
+          <Button onClick={() => setTab("transfer")}>
+            <UploadCloud className="h-4 w-4" /> Import backup
+          </Button>
           <Button onClick={() => setTab("settings")}>
             <SlidersHorizontal className="h-4 w-4" /> Settings
           </Button>
@@ -311,6 +353,7 @@ export default function ProjectDetail() {
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "backups", label: "Backups", count: archives.length },
+          { id: "transfer", label: "Import / export" },
           { id: "restore", label: "Restore" },
           { id: "settings", label: "Settings" },
           { id: "logs", label: "Jobs & logs", count: jobs.length },
@@ -466,46 +509,54 @@ export default function ProjectDetail() {
                       </td>
                       <td className="px-5 py-3">
                         <div className="flex items-center justify-end gap-1">
-                          <a
-                            href={downloadUrl(
-                              `/projects/${project.id}/archives/${encodeURIComponent(archive.name)}/export`,
-                            )}
-                            className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-200"
-                            title="Export archive as tar"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                          </a>
-                          <button
-                            onClick={() => verifyArchive.mutate(archive.name)}
-                            className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-emerald-300"
-                            title="Verify archive"
-                          >
-                            <ShieldCheck className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRestore((current) => ({ ...current, archive: archive.name }));
-                              setTab("restore");
-                            }}
-                            className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-sky-300"
-                            title="Restore"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `Delete archive ${archive.name}? This cannot be undone.`,
+                          <Tooltip content="Export archive as tar">
+                            <a
+                              href={downloadUrl(
+                                `/projects/${project.id}/archives/${encodeURIComponent(archive.name)}/export`,
+                              )}
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-200"
+                              aria-label="Export archive"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </a>
+                          </Tooltip>
+                          <Tooltip content="Verify archive integrity">
+                            <button
+                              onClick={() => verifyArchive.mutate(archive.name)}
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-emerald-300"
+                              aria-label="Verify archive"
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Restore this archive">
+                            <button
+                              onClick={() => {
+                                setRestore((current) => ({ ...current, archive: archive.name }));
+                                setTab("restore");
+                              }}
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-sky-300"
+                              aria-label="Restore archive"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Delete archive" side="left">
+                            <button
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Delete archive ${archive.name}? This cannot be undone.`,
+                                  )
                                 )
-                              )
-                                deleteArchive.mutate(archive.name);
-                            }}
-                            className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-300"
-                            title="Delete archive"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                                  deleteArchive.mutate(archive.name);
+                              }}
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-300"
+                              aria-label="Delete archive"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
                         </div>
                       </td>
                     </tr>
@@ -515,6 +566,207 @@ export default function ProjectDetail() {
             </div>
           )}
         </Card>
+      ) : null}
+
+      {tab === "transfer" ? (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Card>
+            <CardHeader
+              title="Export project data"
+              subtitle="Download encrypted Borg data tied to this project"
+              action={<Download className="h-4 w-4 text-slate-500" />}
+            />
+            <div className="space-y-4 p-5">
+              <div className="rounded-xl border border-white/5 bg-ink-950/40 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl border border-accent-500/20 bg-accent-500/10 p-2 text-accent-400">
+                    <HardDrive className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-slate-200">Full project repository</p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Every archive in this project&apos;s Borg repo, including encryption metadata.
+                    </p>
+                    <a
+                      href={downloadUrl(`/projects/${project.id}/export`)}
+                      className="btn-secondary mt-3 text-xs"
+                    >
+                      <Download className="h-3.5 w-3.5" /> Download repo tar
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/5 bg-ink-950/40 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl border border-accent-500/20 bg-accent-500/10 p-2 text-accent-400">
+                    <FileArchive className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-slate-200">Single archive</p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      A portable tar made with <span className="font-mono">borg export-tar</span>.
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <Picker
+                        value={exportArchive}
+                        onChange={setExportArchive}
+                        options={archives.map((archive) => ({
+                          value: archive.name,
+                          label: archive.name,
+                          description: `${fmtDate(archive.created_at)} · ${formatBytes(archive.original_size)}`,
+                          icon: <FileArchive className="h-4 w-4" />,
+                        }))}
+                        placeholder="Select an archive…"
+                        searchable
+                        ariaLabel="Archive to export"
+                        className="flex-1"
+                      />
+                      <a
+                        href={
+                          exportArchive
+                            ? downloadUrl(
+                                `/projects/${project.id}/archives/${encodeURIComponent(exportArchive)}/export`,
+                              )
+                            : "#"
+                        }
+                        className={cn(
+                          "btn-secondary text-xs",
+                          !exportArchive && "pointer-events-none opacity-50",
+                        )}
+                      >
+                        <Download className="h-3.5 w-3.5" /> Export archive
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500">
+                Repository exports remain encrypted. To restore them on another instance, use the
+                same <span className="font-mono text-slate-400">BORG_PASSPHRASE</span>.
+              </p>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Import into this project"
+              subtitle="Upload a Borg archive tar or a full repository tar"
+              action={<UploadCloud className="h-4 w-4 text-slate-500" />}
+            />
+            <form
+              className="space-y-4 p-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setTransferResult("");
+                setTransferError("");
+                importMutation.mutate();
+              }}
+            >
+              <Field label="Import mode">
+                <Picker
+                  value={transferMode}
+                  onChange={setTransferMode}
+                  options={[
+                    {
+                      value: "archive",
+                      label: "Single archive",
+                      description: "Add one archive to this project with borg import-tar",
+                    },
+                    {
+                      value: "repo",
+                      label: "Full repository",
+                      description: "Replace this project's Borg repository",
+                    },
+                  ]}
+                  ariaLabel="Import mode"
+                />
+              </Field>
+
+              {transferMode === "archive" ? (
+                <Field
+                  label="Archive name"
+                  hint="Name used inside this project's repository. Must be unique."
+                >
+                  <Input
+                    value={transferArchive}
+                    onChange={(event) => setTransferArchive(event.target.value)}
+                    className="font-mono"
+                    required
+                  />
+                </Field>
+              ) : (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                  Full repository import replaces the current Borg repository for this project. The
+                  upload must have been encrypted with the same passphrase.
+                </div>
+              )}
+
+              <label
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setTransferDrag(true);
+                }}
+                onDragLeave={() => setTransferDrag(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setTransferDrag(false);
+                  const dropped = event.dataTransfer.files?.[0];
+                  if (dropped) setTransferFile(dropped);
+                }}
+                className={cn(
+                  "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center transition",
+                  transferDrag
+                    ? "border-accent-500/60 bg-accent-500/5"
+                    : "border-white/10 bg-ink-950/40 hover:border-white/20 hover:bg-white/[0.02]",
+                )}
+              >
+                <div className="rounded-full border border-white/10 bg-white/5 p-2.5 text-accent-400">
+                  <UploadCloud className="h-5 w-5" />
+                </div>
+                <p className="text-xs font-medium text-slate-200">
+                  {transferFile ? transferFile.name : "Drop a .tar file here or click to browse"}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {transferFile
+                    ? formatBytes(transferFile.size)
+                    : "Archive tar or full repository tar · up to 50 GB"}
+                </p>
+                <input
+                  type="file"
+                  className="sr-only"
+                  accept=".tar,.tgz,.gz,application/x-tar"
+                  onChange={(event) => setTransferFile(event.target.files?.[0] || null)}
+                />
+              </label>
+
+              {transferError ? <ErrorBox message={transferError} /> : null}
+              {transferResult ? (
+                <div className="max-h-32 overflow-auto rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 font-mono text-[11px] text-emerald-300">
+                  {transferResult}
+                </div>
+              ) : null}
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] text-slate-500">
+                  Imported data stays inside this project&apos;s scope.
+                </p>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  loading={importMutation.isPending}
+                  disabled={
+                    !transferFile ||
+                    (transferMode === "archive" && !transferArchive.trim())
+                  }
+                >
+                  <UploadCloud className="h-4 w-4" /> Import backup
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
       ) : null}
 
       {tab === "restore" ? (
@@ -533,41 +785,41 @@ export default function ProjectDetail() {
               }}
             >
               <Field label="Archive">
-                <Select
+                <Picker
                   value={restore.archive}
-                  onChange={(event) =>
-                    setRestore((current) => ({ ...current, archive: event.target.value }))
+                  onChange={(next) =>
+                    setRestore((current) => ({ ...current, archive: next }))
                   }
-                  required
-                >
-                  <option value="">Select an archive…</option>
-                  {archives.map((archive) => (
-                    <option key={archive.id} value={archive.name}>
-                      {archive.name} · {fmtDate(archive.created_at)}
-                    </option>
-                  ))}
-                </Select>
+                  options={archives.map((archive) => ({
+                    value: archive.name,
+                    label: archive.name,
+                    description: fmtDate(archive.created_at),
+                    icon: <FileArchive className="h-4 w-4" />,
+                  }))}
+                  placeholder="Select an archive…"
+                  searchable
+                  ariaLabel="Archive"
+                />
               </Field>
               <Field label="Source database">
-                <Select
+                <Picker
                   value={restore.database}
-                  onChange={(event) => {
-                    const db = event.target.value;
+                  onChange={(next) => {
                     setRestore((current) => ({
                       ...current,
-                      database: db,
-                      target: `restore_${db}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+                      database: next,
+                      target: `restore_${next}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
                     }));
                   }}
-                  required
-                >
-                  <option value="">Select a database…</option>
-                  {sourceDbs.map((db) => (
-                    <option key={db} value={db}>
-                      {db}
-                    </option>
-                  ))}
-                </Select>
+                  options={sourceDbs.map((db) => ({
+                    value: db,
+                    label: db,
+                    icon: <Database className="h-4 w-4" />,
+                  }))}
+                  placeholder="Select a database…"
+                  searchable
+                  ariaLabel="Source database"
+                />
               </Field>
               <Field label="Target database" hint="A new database is created by default.">
                 <Input
@@ -579,20 +831,17 @@ export default function ProjectDetail() {
                   required
                 />
               </Field>
-              <label className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                <Checkbox
+                  tone="warning"
                   checked={restore.overwrite}
-                  onChange={(event) =>
-                    setRestore((current) => ({ ...current, overwrite: event.target.checked }))
+                  onChange={(checked) =>
+                    setRestore((current) => ({ ...current, overwrite: checked }))
                   }
+                  label="Overwrite the target database if it exists"
+                  description="This terminates connections and drops the target before restoring."
                 />
-                <span>
-                  Overwrite the target database if it exists. This terminates connections and drops
-                  the target before restoring.
-                </span>
-              </label>
+              </div>
               {restore.overwrite ? (
                 <Field label={`Type "${restore.target}" to confirm`}>
                   <Input
@@ -721,14 +970,12 @@ export default function ProjectDetail() {
                   onChange={(event) => setForm((f) => ({ ...f, notes: event.target.value }))}
                 />
               </Field>
-              <label className="flex items-center gap-2 text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={(event) => setForm((f) => ({ ...f, enabled: event.target.checked }))}
-                />
-                Enable scheduled backups for this project
-              </label>
+              <Switch
+                checked={form.enabled}
+                onChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
+                label="Enable scheduled backups"
+                description="The project will be included in the global or custom schedule."
+              />
               <div className="flex justify-end">
                 <Button type="submit" variant="primary" loading={saveSettings.isPending}>
                   <Save className="h-4 w-4" /> Save settings

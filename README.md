@@ -26,7 +26,9 @@ PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
 - **Retention** — keep daily/weekly/monthly counts, `borg prune` + `borg compact`.
 - **Restore wizard** — restore into a new scratch database by default; destructive overwrite requires confirmation.
 - **Archive verification** — `borg check --verify-data`.
-- **Import/export** — single archive tar, full project repo tar, all repositories, or catalog JSON.
+- **Import/export** — project-level transfer tab plus global archive/repo/catalog exports.
+- **Light & dark mode** — topbar theme switcher with persisted preference.
+- **Polished controls** — searchable React dropdowns, custom checkboxes/switches, and animated tooltips.
 - **Live operations** — job history, persisted logs, health checks for Docker/Borg/DB/disk.
 - **Postgres metadata** — the dashboard's own state lives in a dedicated PostgreSQL 17 container.
 - **Database-backed admin users** — bcrypt-hashed credentials created with an interactive CLI command, httpOnly JWT cookie, rate limiting, audit log.
@@ -35,10 +37,7 @@ PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
 
 ## Requirements
 
-- Docker Engine with the Compose plugin.
-- Access to `/var/run/docker.sock` (the dashboard uses it for discovery and `docker exec`).
-- A host user that can write `./data` and `./backups`, plus the host Docker group GID.
-- Port `8095` (configurable).
+A server with Docker installed, ofc.
 
 ---
 
@@ -134,6 +133,7 @@ labels:
 Every Docker Compose project on each connected server is scanned. Projects containing PostgreSQL are auto-added to **Managed** with a per-project Borg repository, using all discovered databases and the container's `POSTGRES_USER`.
 
 - New Compose projects are picked up on startup, on **Rescan**, and every five minutes.
+- Opening the **Managed** tab does **not** trigger a scan. Discovery runs only on **Rescan** or when you open **Detected/Ignored**.
 - Compose projects without a PostgreSQL service are shown under **Projects → Detected → Other Compose projects**.
 - Auto-add can be disabled in **Settings → Global defaults**.
 - Use the trash button on a project card to **remove** it. The encrypted Borg repository stays on disk; the Compose project is added to the ignore list so it is not auto-added again.
@@ -225,11 +225,12 @@ Restores are intentionally non-destructive by default.
 | Operation | Format | Where |
 |---|---|---|
 | Catalog only | JSON | Import/Export → Catalog |
-| Single archive | `.tar` (`borg export-tar`) | Project → Backups → download icon |
-| Single project repo | `.tar` of the encrypted repo | Project → Export repo |
+| Single archive | `.tar` (`borg export-tar`) | Project → Import / export |
+| Single project repo | `.tar` of the encrypted repo | Project → Import / export |
+| Import archive/repo | `.tar` upload | Project → Import / export |
 | All repositories | `.tar` of `backups/` | Import/Export → All repositories |
 
-Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
+Open a project and use the **Import / export** tab to download its full repository or a specific archive, and to upload a new archive or replace the repository — all scoped to that project. Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
 
 ---
 

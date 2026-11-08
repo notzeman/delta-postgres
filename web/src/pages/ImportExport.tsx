@@ -19,10 +19,10 @@ import {
   ErrorBox,
   Field,
   Input,
-  Select,
   Spinner,
   SuccessBox,
 } from "../components/ui";
+import Picker from "../components/Picker";
 
 export default function ImportExport() {
   const projectsQuery = useQuery({
@@ -120,18 +120,20 @@ export default function ImportExport() {
                 </div>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Select
+                <Picker
                   value={repoProject}
-                  onChange={(event) => setRepoProject(event.target.value)}
+                  onChange={setRepoProject}
+                  options={projects.map((project) => ({
+                    value: String(project.id),
+                    label: project.name,
+                    description: `${project.server_name || "local"} · ${project.slug}`,
+                    icon: <Database className="h-4 w-4" />,
+                  }))}
+                  placeholder="Select a project…"
+                  searchable
+                  ariaLabel="Project repository"
                   className="flex-1"
-                >
-                  <option value="">Select a project…</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name} · {project.slug}
-                    </option>
-                  ))}
-                </Select>
+                />
                 <a
                   href={repoProject ? downloadUrl(`/projects/${repoProject}/export`) : "#"}
                   className={`btn-secondary text-xs ${!repoProject ? "pointer-events-none opacity-50" : ""}`}
@@ -173,24 +175,38 @@ export default function ImportExport() {
             }}
           >
             <Field label="Target project">
-              <Select
+              <Picker
                 value={importProject}
-                onChange={(event) => setImportProject(event.target.value)}
-                required
-              >
-                <option value="">Select a project…</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name} · {project.slug}
-                  </option>
-                ))}
-              </Select>
+                onChange={setImportProject}
+                options={projects.map((project) => ({
+                  value: String(project.id),
+                  label: project.name,
+                  description: `${project.server_name || "local"} · ${project.slug}`,
+                  icon: <Database className="h-4 w-4" />,
+                }))}
+                placeholder="Select a project…"
+                searchable
+                ariaLabel="Target project"
+              />
             </Field>
             <Field label="Import mode">
-              <Select value={mode} onChange={(event) => setMode(event.target.value)}>
-                <option value="archive">Single archive (borg import-tar)</option>
-                <option value="repo">Full repository (replace repo)</option>
-              </Select>
+              <Picker
+                value={mode}
+                onChange={setMode}
+                options={[
+                  {
+                    value: "archive",
+                    label: "Single archive",
+                    description: "Import one tar with borg import-tar",
+                  },
+                  {
+                    value: "repo",
+                    label: "Full repository",
+                    description: "Replace the target project's Borg repo",
+                  },
+                ]}
+                ariaLabel="Import mode"
+              />
             </Field>
             {mode === "archive" ? (
               <Field label="Archive name" hint="Name to assign inside the project repository">

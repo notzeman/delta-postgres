@@ -24,12 +24,13 @@ import {
   Field,
   Input,
   Modal,
-  Select,
   Spinner,
   SuccessBox,
+  Switch,
   Textarea,
   cn,
 } from "../components/ui";
+import Picker from "../components/Picker";
 
 interface ServerForm {
   name: string;
@@ -174,20 +175,30 @@ function ServerFormModal({
             />
           </Field>
           <Field label="Connection type">
-            <Select
+            <Picker
               value={form.type}
-              onChange={(event) =>
+              onChange={(next) =>
                 setForm((f) => ({
                   ...f,
-                  type: event.target.value as "local" | "tcp",
-                  protocol: event.target.value === "local" ? "http" : f.protocol,
+                  type: next as "local" | "tcp",
+                  protocol: next === "local" ? "http" : f.protocol,
                 }))
               }
+              options={[
+                {
+                  value: "tcp",
+                  label: "TCP / TLS",
+                  description: "Remote Docker Engine API",
+                },
+                {
+                  value: "local",
+                  label: "Local socket",
+                  description: "Unix socket on the dashboard host",
+                },
+              ]}
               disabled={Boolean(editing)}
-            >
-              <option value="tcp">TCP / TLS</option>
-              <option value="local">Local socket</option>
-            </Select>
+              ariaLabel="Connection type"
+            />
           </Field>
         </div>
 
@@ -195,19 +206,21 @@ function ServerFormModal({
           <>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Protocol">
-                <Select
+                <Picker
                   value={form.protocol}
-                  onChange={(event) =>
+                  onChange={(next) =>
                     setForm((f) => ({
                       ...f,
-                      protocol: event.target.value as "http" | "https",
-                      port: event.target.value === "https" ? "2376" : "2375",
+                      protocol: next as "http" | "https",
+                      port: next === "https" ? "2376" : "2375",
                     }))
                   }
-                >
-                  <option value="http">http</option>
-                  <option value="https">https</option>
-                </Select>
+                  options={[
+                    { value: "http", label: "http", description: "Unencrypted · port 2375" },
+                    { value: "https", label: "https", description: "TLS · port 2376" },
+                  ]}
+                  ariaLabel="Protocol"
+                />
               </Field>
               <Field label="Host">
                 <Input
@@ -227,14 +240,12 @@ function ServerFormModal({
                 />
               </Field>
             </div>
-            <label className="flex items-center gap-2 text-xs text-slate-300">
-              <input
-                type="checkbox"
-                checked={form.tlsVerify}
-                onChange={(event) => setForm((f) => ({ ...f, tlsVerify: event.target.checked }))}
-              />
-              Verify TLS certificate (recommended)
-            </label>
+            <Switch
+              checked={form.tlsVerify}
+              onChange={(checked) => setForm((f) => ({ ...f, tlsVerify: checked }))}
+              label="Verify TLS certificate"
+              description="Recommended. Disable only for self-signed endpoints you trust."
+            />
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="CA certificate" hint={editing?.hasCa ? "Stored — leave blank to keep" : "PEM contents"}>
                 <Textarea
@@ -280,14 +291,12 @@ function ServerFormModal({
           </Field>
         )}
 
-        <label className="flex items-center gap-2 text-xs text-slate-300">
-          <input
-            type="checkbox"
-            checked={form.enabled}
-            onChange={(event) => setForm((f) => ({ ...f, enabled: event.target.checked }))}
-          />
-          Enable this server for discovery and backups
-        </label>
+        <Switch
+          checked={form.enabled}
+          onChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
+          label="Enable this server"
+          description="Include it in discovery, schedules, and backup operations."
+        />
 
         {testResult ? (
           <SuccessBox

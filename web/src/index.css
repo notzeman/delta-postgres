@@ -2,8 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+html.dark {
   color-scheme: dark;
+  --white: 255 255 255;
+  --slate-50: 248 250 252;
+  --slate-100: 241 245 249;
+  --slate-200: 226 232 240;
+  --slate-300: 203 213 225;
+  --slate-400: 148 163 184;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+  --slate-700: 51 65 85;
+  --ink-950: 8 11 18;
+  --ink-900: 13 17 26;
+  --ink-850: 17 23 37;
+  --ink-800: 21 29 46;
+  --ink-700: 29 39 59;
+  --ink-600: 40 53 77;
+  --accent-300: 94 234 212;
+  --accent-400: 45 212 191;
+  --accent-500: 20 184 166;
+  --accent-600: 13 148 136;
+}
+
+html.light {
+  color-scheme: light;
+  --white: 15 23 42;
+  --slate-50: 248 250 252;
+  --slate-100: 15 23 42;
+  --slate-200: 30 41 59;
+  --slate-300: 51 65 85;
+  --slate-400: 71 85 105;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+  --slate-700: 51 65 85;
+  --ink-950: 248 250 252;
+  --ink-900: 255 255 255;
+  --ink-850: 248 250 252;
+  --ink-800: 241 245 249;
+  --ink-700: 226 232 240;
+  --ink-600: 203 213 225;
+  --accent-300: 15 118 110;
+  --accent-400: 13 148 136;
+  --accent-500: 13 148 136;
+  --accent-600: 17 94 89;
 }
 
 html,
@@ -21,8 +64,19 @@ body {
   background-attachment: fixed;
 }
 
+html.light body {
+  background-image:
+    radial-gradient(1200px 600px at 10% -10%, rgba(13, 148, 136, 0.10), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(99, 102, 241, 0.07), transparent 55%),
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
 ::selection {
   background: rgba(45, 212, 191, 0.28);
+}
+
+html.light ::selection {
+  background: rgba(13, 148, 136, 0.22);
 }
 
 * {
@@ -38,6 +92,48 @@ body {
 *::-webkit-scrollbar-thumb {
   background: #28354d;
   border-radius: 999px;
+}
+
+html.light * {
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+html.light *::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+html.light .text-emerald-300 {
+  color: #047857;
+}
+
+html.light .text-emerald-400 {
+  color: #059669;
+}
+
+html.light .text-rose-200,
+html.light .text-rose-300 {
+  color: #be123c;
+}
+
+html.light .text-rose-400 {
+  color: #e11d48;
+}
+
+html.light .text-amber-200,
+html.light .text-amber-300 {
+  color: #92400e;
+}
+
+html.light .text-amber-400 {
+  color: #d97706;
+}
+
+html.light .text-sky-300 {
+  color: #0369a1;
+}
+
+html.light .text-violet-300 {
+  color: #6d28d9;
 }
 
 @layer components {
@@ -86,6 +182,21 @@ body {
   }
 }
 
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tooltip-panel {
+  animation: tooltip-in 0.12s ease-out;
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
@@ -115,4 +226,9 @@ body {
   background: linear-gradient(90deg, #151d2e 25%, #1d273b 37%, #151d2e 63%);
   background-size: 200% 100%;
   animation: shimmer 1.4s ease infinite;
+}
+
+html.light .skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
+  background-size: 200% 100%;
 }

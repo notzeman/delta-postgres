@@ -1328,10 +1328,30 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  app.get("/api/audit", async () => {
-    const { rows } = await pool.query(
-      `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100`,
+  app.get("/api/audit", async (request) => {
+    const query = request.query as any;
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(5, Number(query.pageSize) || 20));
+    const offset = (page - 1) * pageSize;
+    const total = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM audit_log`,
     );
-    return { audit: rows };
+    const totalCount = Number(total.rows[0]?.count || 0);
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const safeOffset = (safePage - 1) * pageSize;
+    const { rows } = await pool.query(
+      `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [pageSize, safeOffset],
+    );
+    return {
+      audit: rows,
+      pagination: {
+        page: safePage,
+        pageSize,
+        total: totalCount,
+        totalPages,
+      },
+    };
   });
 }

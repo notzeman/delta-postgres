@@ -8,9 +8,11 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Moon,
   Server,
   Settings as SettingsIcon,
   ShieldCheck,
+  Sun,
   X,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -18,6 +20,7 @@ import { api, formatBytes } from "../api";
 import type { Health } from "../types";
 import type { Username } from "../App";
 import { cn } from "./ui";
+import Tooltip from "./Tooltip";
 
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -41,15 +44,20 @@ function useTitle(): string {
 
 function HealthDot({ ok, label }: { ok: boolean | undefined; label: string }) {
   return (
-    <div className="flex items-center gap-1.5" title={`${label}: ${ok ? "healthy" : "unavailable"}`}>
-      <span
-        className={cn(
-          "h-1.5 w-1.5 rounded-full",
-          ok ? "bg-emerald-400" : "bg-rose-400",
-        )}
-      />
-      <span className="text-[11px] text-slate-500">{label}</span>
-    </div>
+    <Tooltip
+      side="right"
+      content={`${label}: ${ok ? "healthy" : "unavailable"}`}
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            ok ? "bg-emerald-400" : "bg-rose-400",
+          )}
+        />
+        <span className="text-[11px] text-slate-500">{label}</span>
+      </div>
+    </Tooltip>
   );
 }
 
@@ -61,6 +69,12 @@ export default function Layout({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("light")
+      ? "light"
+      : "dark",
+  );
   const title = useTitle();
   const navigate = useNavigate();
   const health = useQuery({
@@ -68,6 +82,18 @@ export default function Layout({
     queryFn: () => api<Health>("/health"),
     refetchInterval: 30_000,
   });
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(next);
+    try {
+      localStorage.setItem("dp-theme", next);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const logout = async () => {
     await api("/auth/logout", { method: "POST" });
@@ -155,13 +181,15 @@ export default function Layout({
               <p className="truncate text-xs font-medium text-slate-300">{user.username}</p>
               <p className="text-[10px] text-slate-500">Administrator</p>
             </div>
-            <button
-              onClick={logout}
-              className="rounded-lg p-2 text-slate-500 transition hover:bg-white/5 hover:text-rose-300"
-              title="Sign out"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <Tooltip content="Sign out" side="left">
+              <button
+                onClick={logout}
+                className="rounded-lg p-2 text-slate-500 transition hover:bg-white/5 hover:text-rose-300"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </Tooltip>
           </div>
         </div>
       </aside>
@@ -182,18 +210,33 @@ export default function Layout({
               </p>
             </div>
           </div>
-          <div className="hidden items-center gap-3 sm:flex">
-            {health.data?.worker ? (
-              <span className="text-[11px] text-slate-500">
-                {health.data.worker.running} running / {health.data.worker.concurrency} slots
-              </span>
-            ) : null}
-            <button
-              onClick={() => navigate("/projects")}
-              className="btn-secondary text-xs"
-            >
-              Manage projects
-            </button>
+          <div className="flex items-center gap-2">
+            <Tooltip content={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              <button
+                onClick={toggleTheme}
+                className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {theme === "dark" ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </button>
+            </Tooltip>
+            <div className="hidden items-center gap-3 sm:flex">
+              {health.data?.worker ? (
+                <span className="text-[11px] text-slate-500">
+                  {health.data.worker.running} running / {health.data.worker.concurrency} slots
+                </span>
+              ) : null}
+              <button
+                onClick={() => navigate("/projects")}
+                className="btn-secondary text-xs"
+              >
+                Manage projects
+              </button>
+            </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:py-8">

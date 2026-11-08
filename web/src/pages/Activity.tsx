@@ -9,12 +9,12 @@ import {
   Card,
   CardHeader,
   EmptyState,
-  Select,
   Spinner,
   StatusBadge,
   Tabs,
 } from "../components/ui";
 import JobLogModal from "../components/JobLogModal";
+import Tooltip from "../components/Tooltip";
 
 export default function Activity() {
   const [filter, setFilter] = useState("all");
@@ -125,13 +125,15 @@ export default function Activity() {
                     </td>
                     <td className="px-3 py-3 text-slate-300">{formatBytes(job.size_bytes)}</td>
                     <td className="px-5 py-3 text-right">
-                      <button
-                        onClick={() => setLogJob(job.id)}
-                        className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-accent-300"
-                        title="View log"
-                      >
-                        <Terminal className="h-3.5 w-3.5" />
-                      </button>
+                      <Tooltip content="View job log" side="left">
+                        <button
+                          onClick={() => setLogJob(job.id)}
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-accent-300"
+                          aria-label="View job log"
+                        >
+                          <Terminal className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
                     </td>
                   </tr>
                 ))}

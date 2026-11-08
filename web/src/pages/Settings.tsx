@@ -13,7 +13,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { api, fmtDate, formatBytes } from "../api";
-import type { Settings as SettingsType, Health } from "../types";
+import type { AuditResponse, Settings as SettingsType, Health } from "../types";
 import {
   Badge,
   Button,
@@ -24,8 +24,10 @@ import {
   Input,
   Spinner,
   SuccessBox,
+  Switch,
 } from "../components/ui";
 import CronField from "../components/CronField";
+import Pagination from "../components/Pagination";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -38,10 +40,18 @@ export default function Settings() {
     queryFn: () => api<Health>("/health"),
     refetchInterval: 30_000,
   });
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(20);
   const auditQuery = useQuery({
-    queryKey: ["audit"],
-    queryFn: () => api<{ audit: any[] }>("/audit"),
+    queryKey: ["audit", auditPage, auditPageSize],
+    queryFn: () =>
+      api<AuditResponse>(`/audit?page=${auditPage}&pageSize=${auditPageSize}`),
   });
+
+  useEffect(() => {
+    const page = auditQuery.data?.pagination?.page;
+    if (page && page !== auditPage) setAuditPage(page);
+  }, [auditQuery.data?.pagination?.page, auditPage]);
 
   const [form, setForm] = useState({
     globalCron: "0 2 * * *",
@@ -93,6 +103,7 @@ export default function Settings() {
   const settings = settingsQuery.data?.settings;
   const health = healthQuery.data;
   const audit = auditQuery.data?.audit || [];
+  const pagination = auditQuery.data?.pagination;
 
   if (settingsQuery.isLoading) return <Spinner label="Loading settings…" />;
 
@@ -169,23 +180,14 @@ export default function Settings() {
                 placeholder="https://hooks.example.com/…"
               />
             </Field>
-            <label className="flex items-start gap-2 rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs text-slate-300">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={form.autoAddProjects}
-                onChange={(event) =>
-                  setForm((f) => ({ ...f, autoAddProjects: event.target.checked }))
-                }
-              />
-              <span>
-                <span className="font-medium text-slate-200">Auto-add discovered projects</span>
-                <span className="mt-0.5 block text-[11px] text-slate-500">
-                  Automatically add PostgreSQL projects found through the Docker Compose scan.
-                  Removed projects are ignored and can be restored from the Projects page.
-                </span>
-              </span>
-            </label>
+            <Switch
+              checked={form.autoAddProjects}
+              onChange={(checked) =>
+                setForm((f) => ({ ...f, autoAddProjects: checked }))
+              }
+              label="Auto-add discovered projects"
+              description="Automatically add PostgreSQL projects found through the Docker Compose scan. Removed projects are ignored and can be restored from the Projects page."
+            />
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] text-slate-500">
                 Borg repositories use <span className="font-mono text-slate-400">repokey-blake2</span>{" "}
@@ -273,7 +275,7 @@ export default function Settings() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {audit.slice(0, 25).map((entry) => (
+              {audit.map((entry) => (
                 <tr key={entry.id} className="hover:bg-white/[0.02]">
                   <td className="px-5 py-2.5 text-slate-400">{fmtDate(entry.created_at)}</td>
                   <td className="px-3 py-2.5 text-slate-300">{entry.actor || "system"}</td>
@@ -285,7 +287,13 @@ export default function Settings() {
                   </td>
                 </tr>
               ))}
-              {audit.length === 0 ? (
+              {auditQuery.isLoading ? (
+                <tr>
+                  <td colSpan={4} className="px-5 py-8">
+                    <Spinner label="Loading audit log…" />
+                  </td>
+                </tr>
+              ) : audit.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-5 py-8 text-center text-xs text-slate-500">
                     No audit entries yet.
@@ -295,6 +303,19 @@ export default function Settings() {
             </tbody>
           </table>
         </div>
+        {pagination ? (
+          <Pagination
+            page={pagination.page}
+            pageSize={pagination.pageSize}
+            total={pagination.total}
+            totalPages={pagination.totalPages}
+            onPageChange={setAuditPage}
+            onPageSizeChange={(size) => {
+              setAuditPageSize(size);
+              setAuditPage(1);
+            }}
+          />
+        ) : null}
       </Card>
     </div>
   );

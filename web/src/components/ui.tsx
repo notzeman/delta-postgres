@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Loader2, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -219,10 +219,6 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cn("input", props.className)} />;
 }
 
-export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} className={cn("input", props.className)} />;
-}
-
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={cn("input", props.className)} />;
 }
@@ -294,6 +290,125 @@ export function Tabs({
         </button>
       ))}
     </div>
+  );
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  tone = "accent",
+  className,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  disabled?: boolean;
+  tone?: "accent" | "warning";
+  className?: string;
+}) {
+  return (
+    <label
+      className={cn(
+        "group flex cursor-pointer items-start gap-2.5 text-xs text-slate-300",
+        disabled && "cursor-not-allowed opacity-50",
+        className,
+      )}
+    >
+      <input
+        type="checkbox"
+        className="peer sr-only"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+      />
+      <span
+        className={cn(
+          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40",
+          checked
+            ? tone === "warning"
+              ? "border-amber-400 bg-amber-400"
+              : "border-accent-500 bg-accent-500"
+            : "border-white/15 bg-ink-950/60 group-hover:border-white/30",
+        )}
+      >
+        <Check
+          className={cn(
+            "h-3 w-3 text-ink-950 transition",
+            checked ? "opacity-100" : "opacity-0",
+          )}
+          strokeWidth={3}
+        />
+      </span>
+      <span className="min-w-0">
+        <span className="block font-medium text-slate-200">{label}</span>
+        {description ? (
+          <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
+            {description}
+          </span>
+        ) : null}
+      </span>
+    </label>
+  );
+}
+
+export function Switch({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  className,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <label
+      className={cn(
+        "group flex cursor-pointer items-start gap-3 text-xs text-slate-300",
+        disabled && "cursor-not-allowed opacity-50",
+        className,
+      )}
+    >
+      <input
+        type="checkbox"
+        className="peer sr-only"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+      />
+      <span
+        className={cn(
+          "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40",
+          checked
+            ? "border-accent-500 bg-accent-500 shadow-glow"
+            : "border-white/10 bg-white/5 group-hover:border-white/20",
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all",
+            checked ? "left-6" : "left-1",
+          )}
+        />
+      </span>
+      <span className="min-w-0">
+        <span className="block font-medium text-slate-200">{label}</span>
+        {description ? (
+          <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">
+            {description}
+          </span>
+        ) : null}
+      </span>
+    </label>
   );
 }
 

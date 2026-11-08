@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Server,
   ShieldCheck,
   TriangleAlert,
   Zap,
@@ -34,9 +35,10 @@ import {
   Spinner,
   StatCard,
   StatusBadge,
-  Select,
   cn,
 } from "../components/ui";
+import Picker from "../components/Picker";
+import HoverTip from "../components/Tooltip";
 
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
@@ -133,19 +135,25 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select
+          <Picker
             value={serverFilter}
-            onChange={(event) => setServerFilter(event.target.value)}
+            onChange={setServerFilter}
+            options={[
+              { value: "all", label: "All servers" },
+              ...(serversQuery.data?.servers || []).map((server) => ({
+                value: String(server.id),
+                label: server.name,
+                description:
+                  server.type === "local"
+                    ? "Local Docker socket"
+                    : `${server.protocol}://${server.host}:${server.port}`,
+                icon: <Server className="h-4 w-4" />,
+              })),
+            ]}
+            searchable
+            ariaLabel="Filter by Docker server"
             className="w-48"
-            title="Filter by Docker server"
-          >
-            <option value="all">All servers</option>
-            {(serversQuery.data?.servers || []).map((server) => (
-              <option key={server.id} value={server.id}>
-                {server.name}
-              </option>
-            ))}
-          </Select>
+          />
           <Button
             variant="primary"
             onClick={() => backupAll.mutate()}
@@ -269,20 +277,25 @@ export default function Dashboard() {
                           <p className="text-[10px] uppercase tracking-wider text-slate-500">Next run</p>
                           <p className="text-xs text-slate-300">{timeAgo(project.next_run_at)}</p>
                         </div>
-                        <Button
-                          size="sm"
-                          onClick={() => backupOne.mutate(project.id)}
-                          loading={backupOne.isPending && backupOne.variables === project.id}
-                          title="Back up now"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                        </Button>
-                        <Link
-                          to={`/projects/${project.id}`}
-                          className="rounded-lg p-2 text-slate-500 hover:bg-white/5 hover:text-slate-200"
-                        >
-                          <ArrowRight className="h-4 w-4" />
-                        </Link>
+                        <HoverTip content="Back up this project now">
+                          <Button
+                            size="sm"
+                            onClick={() => backupOne.mutate(project.id)}
+                            loading={backupOne.isPending && backupOne.variables === project.id}
+                            aria-label="Back up now"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                          </Button>
+                        </HoverTip>
+                        <HoverTip content="Open project">
+                          <Link
+                            to={`/projects/${project.id}`}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-white/5 hover:text-slate-200"
+                            aria-label="Open project"
+                          >
+                            <ArrowRight className="h-4 w-4" />
+                          </Link>
+                        </HoverTip>
                       </div>
                     </div>
                   ))}

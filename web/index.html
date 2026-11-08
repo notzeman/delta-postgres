@@ -1,10 +1,25 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b12" />
     <title>DeltaPostgres · Borg Backup Console</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("dp-theme");
+          var system = window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+          var theme = stored === "light" || stored === "dark" ? stored : system;
+          document.documentElement.classList.remove("dark", "light");
+          document.documentElement.classList.add(theme);
+        } catch (error) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

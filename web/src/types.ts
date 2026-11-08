@@ -218,3 +218,22 @@ export interface JobDetailResponse {
   job: Job;
   log: string;
 }
+
+export interface AuditEntry {
+  id: number;
+  actor: string | null;
+  action: string;
+  target: string | null;
+  meta?: unknown;
+  created_at: string;
+}
+
+export interface AuditResponse {
+  audit: AuditEntry[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+}

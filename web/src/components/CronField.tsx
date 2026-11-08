@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Field, Input, Select } from "./ui";
+import { Field, Input } from "./ui";
+import Picker from "./Picker";
 
 export const CRON_PRESETS = [
   { label: "Every hour", value: "0 * * * *" },
@@ -43,24 +44,25 @@ export default function CronField({
   return (
     <Field label={label} hint={hint}>
       <div className="space-y-2">
-        <Select
+        <Picker
           value={mode}
-          onChange={(event) => {
-            const next = event.target.value;
+          onChange={(next) => {
             setMode(next);
             if (next === "") onChange("");
             else if (next !== CUSTOM) onChange(next);
             else if (!value || match) onChange("0 2 * * *");
           }}
-        >
-          {allowInherit ? <option value="">{inheritLabel}</option> : null}
-          {CRON_PRESETS.map((preset) => (
-            <option key={preset.value} value={preset.value}>
-              {preset.label}
-            </option>
-          ))}
-          <option value={CUSTOM}>Custom cron expression</option>
-        </Select>
+          options={[
+            ...(allowInherit ? [{ value: "", label: inheritLabel }] : []),
+            ...CRON_PRESETS.map((preset) => ({
+              value: preset.value,
+              label: preset.label,
+            })),
+            { value: CUSTOM, label: "Custom cron expression" },
+          ]}
+          placeholder={inheritLabel}
+          ariaLabel={label}
+        />
         {mode === CUSTOM ? (
           <Input
             value={value}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
+  Check,
   Database,
   EyeOff,
   Play,
@@ -27,18 +28,20 @@ import {
   Button,
   Card,
   CardHeader,
+  Checkbox,
   EmptyState,
   ErrorBox,
   Field,
   Input,
   Modal,
-  Select,
   Spinner,
   StatusBadge,
   Tabs,
   cn,
 } from "../components/ui";
 import CronField from "../components/CronField";
+import Picker from "../components/Picker";
+import Tooltip from "../components/Tooltip";
 
 interface AddPayload {
   name: string;
@@ -237,30 +240,38 @@ function AddProjectModal({
             />
           </Field>
           <Field label="Docker server" hint={prefill ? "Detected project server" : "Scope this project"}>
-            <Select
-              value={serverId}
-              onChange={(event) => onServerChange(event.target.value)}
+            <Picker
+              value={String(serverId)}
+              onChange={onServerChange}
+              options={servers.map((server) => ({
+                value: String(server.id),
+                label: server.name,
+                description:
+                  server.type === "local"
+                    ? "Local Docker socket"
+                    : `${server.protocol}://${server.host}:${server.port}`,
+                icon: <Server className="h-4 w-4" />,
+              }))}
+              placeholder="Select a server…"
+              searchable
               disabled={Boolean(prefill)}
-              required
-            >
-              <option value="">Select a server…</option>
-              {servers.map((server) => (
-                <option key={server.id} value={server.id}>
-                  {server.name} ({server.type})
-                </option>
-              ))}
-            </Select>
+              ariaLabel="Docker server"
+            />
           </Field>
           <Field label="Docker container" hint="Detected from the selected server">
-            <Select value={containerName} onChange={(event) => onContainerChange(event.target.value)} required>
-              <option value="">Select a container…</option>
-              {containers.map((container) => (
-                <option key={container.id} value={container.name}>
-                  {container.name} · {container.state}
-                  {container.isPostgres ? "" : " (non-postgres)"}
-                </option>
-              ))}
-            </Select>
+            <Picker
+              value={containerName}
+              onChange={onContainerChange}
+              options={containers.map((container) => ({
+                value: container.name,
+                label: container.name,
+                description: `${container.state}${container.isPostgres ? "" : " · non-postgres"}`,
+                icon: <Database className="h-4 w-4" />,
+              }))}
+              placeholder="Select a container…"
+              searchable
+              ariaLabel="Docker container"
+            />
           </Field>
         </div>
         {containersQuery.isLoading ? (
@@ -281,14 +292,12 @@ function AddProjectModal({
             <div>
               This container does not look like PostgreSQL. You can still add it, but the backup
               will fail unless it contains pg_dump tools.
-              <label className="mt-2 flex items-center gap-2 text-amber-100">
-                <input
-                  type="checkbox"
-                  checked={force}
-                  onChange={(event) => setForce(event.target.checked)}
-                />
-                Add anyway
-              </label>
+              <Checkbox
+                checked={force}
+                onChange={setForce}
+                label="Add anyway"
+                description="This container does not look like PostgreSQL."
+              />
             </div>
           </div>
         ) : null}
@@ -341,8 +350,25 @@ function AddProjectModal({
                   )}
                 >
                   <span className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "flex h-4 w-4 items-center justify-center rounded border transition",
+                        databases.includes(db.name)
+                          ? "border-accent-500 bg-accent-500"
+                          : "border-white/15 bg-ink-950/60",
+                      )}
+                    >
+                      <Check
+                        className={cn(
+                          "h-3 w-3 text-ink-950 transition",
+                          databases.includes(db.name) ? "opacity-100" : "opacity-0",
+                        )}
+                        strokeWidth={3}
+                      />
+                    </span>
                     <input
                       type="checkbox"
+                      className="sr-only"
                       checked={databases.includes(db.name)}
                       onChange={(event) =>
                         setDatabases((current) =>
@@ -428,6 +454,7 @@ export default function Projects() {
   const queryClient = useQueryClient();
   const [serverFilter, setServerFilter] = useState("all");
   const [tab, setTab] = useState("managed");
+  const [scanRequested, setScanRequested] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [prefill, setPrefill] = useState<DiscoveredProject | null>(null);
   const [actionError, setActionError] = useState("");
@@ -436,12 +463,19 @@ export default function Projects() {
   const projectsQuery = useQuery({
     queryKey: ["projects", serverFilter],
     queryFn: () => api<{ projects: Project[] }>(`/projects${serverQuery}`),
-    refetchInterval: 20_000,
+    staleTime: 30_000,
+    refetchOnMount: false,
   });
   const discoveryQuery = useQuery({
     queryKey: ["discovery", serverFilter],
     queryFn: () => api<DiscoveryResponse>(`/discovery${serverQuery}`),
-    refetchInterval: 60_000,
+    // Discovery performs Docker scans and auto-imports. Do not run it just
+    // because the Projects page was opened; only when Detected/Ignored is
+    // viewed or the user explicitly asks for a Rescan.
+    enabled: tab !== "managed" || scanRequested,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
   const serversQuery = useQuery({
     queryKey: ["servers"],
@@ -519,21 +553,28 @@ export default function Projects() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select
+          <Picker
             value={serverFilter}
-            onChange={(event) => setServerFilter(event.target.value)}
+            onChange={setServerFilter}
+            options={[
+              { value: "all", label: "All servers" },
+              ...servers.map((server) => ({
+                value: String(server.id),
+                label: server.name,
+                description:
+                  server.type === "local"
+                    ? "Local Docker socket"
+                    : `${server.protocol}://${server.host}:${server.port}`,
+                icon: <Server className="h-4 w-4" />,
+              })),
+            ]}
+            searchable
+            ariaLabel="Filter projects by Docker server"
             className="w-52"
-            title="Filter projects by Docker server"
-          >
-            <option value="all">All servers</option>
-            {servers.map((server) => (
-              <option key={server.id} value={server.id}>
-                {server.name}
-              </option>
-            ))}
-          </Select>
+          />
           <Button
             onClick={() => {
+              setScanRequested(true);
               queryClient.invalidateQueries({ queryKey: ["discovery"] });
               queryClient.invalidateQueries({ queryKey: ["projects"] });
             }}
@@ -648,21 +689,23 @@ export default function Projects() {
                   >
                     Open <ArrowRight className="h-3.5 w-3.5" />
                   </Link>
-                  <button
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Remove ${project.name}? The Borg repository stays on disk, and this compose project will be ignored so auto-discovery does not re-add it.`,
-                        )
-                      ) {
-                        removeProject.mutate(project.id);
-                      }
-                    }}
-                    className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"
-                    title="Remove project and ignore it from future scans"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <Tooltip content="Remove project and ignore it from future scans">
+                    <button
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Remove ${project.name}? The Borg repository stays on disk, and this compose project will be ignored so auto-discovery does not re-add it.`,
+                          )
+                        ) {
+                          removeProject.mutate(project.id);
+                        }
+                      }}
+                      className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"
+                      aria-label="Remove project"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                 </div>
               </Card>
             ))}
