@@ -42,6 +42,7 @@ import {
 import CronField from "../components/CronField";
 import Picker from "../components/Picker";
 import Tooltip from "../components/Tooltip";
+import ConfirmModal from "../components/ConfirmModal";
 
 interface AddPayload {
   name: string;
@@ -457,6 +458,7 @@ export default function Projects() {
   const [scanRequested, setScanRequested] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [prefill, setPrefill] = useState<DiscoveredProject | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<Project | null>(null);
   const [actionError, setActionError] = useState("");
   const serverQuery = serverFilter === "all" ? "" : `?serverId=${serverFilter}`;
   const projectsParams = new URLSearchParams();
@@ -510,6 +512,7 @@ export default function Projects() {
     mutationFn: (id: number) => api(`/projects/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       setActionError("");
+      setRemoveTarget(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["discovery"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
@@ -712,19 +715,14 @@ export default function Projects() {
                   >
                     Open <ArrowRight className="h-3.5 w-3.5" />
                   </Link>
-                  <Tooltip content="Remove project and ignore it from future scans">
+                  <Tooltip content="Move project to Ignored">
                     <button
                       onClick={() => {
-                        if (
-                          window.confirm(
-                            `Move ${project.name} to Ignored? Its archives, jobs, and Borg repository are kept, and auto-discovery will not re-add it.`,
-                          )
-                        ) {
-                          removeProject.mutate(project.id);
-                        }
+                        setActionError("");
+                        setRemoveTarget(project);
                       }}
                       className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"
-                      aria-label="Remove project"
+                      aria-label="Move project to Ignored"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -943,6 +941,23 @@ export default function Projects() {
           )}
         </div>
       )}
+
+      <ConfirmModal
+        open={Boolean(removeTarget)}
+        onClose={() => {
+          setRemoveTarget(null);
+          setActionError("");
+        }}
+        onConfirm={() => removeTarget && removeProject.mutate(removeTarget.id)}
+        title="Move project to Ignored?"
+        description={removeTarget?.name}
+        confirmLabel="Move to Ignored"
+        loading={removeProject.isPending}
+        error={actionError}
+      >
+        Archives, backup jobs, and the encrypted Borg repository will be kept. The project
+        disappears from Managed and auto-discovery will not re-add it.
+      </ConfirmModal>
 
       {addOpen ? (
         <AddProjectModal

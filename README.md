@@ -246,6 +246,10 @@ Restores are intentionally non-destructive by default.
 
 Open a project and use the **Import / export** tab to download its full repository or a specific archive, and to upload a new archive or replace the repository — all scoped to that project. Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
 
+An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The restore **Source database** picker lists those dumps. If a project has three databases, the archive has three dumps.
+
+Imported archives are subject to the project's retention policy. Importing an archive with the same timestamp/day as an existing one can result in one being removed by the next `borg prune`; the catalog now reconciles automatically and removes rows for archives that no longer exist.
+
 ---
 
 ## Configuration
@@ -401,6 +405,9 @@ The entrypoint auto-detects the socket GID. If you use a custom Docker socket or
 
 **`no such container` after recreating a Compose service**
 Container IDs change when a container is recreated; names and Compose labels stay stable. Backup and restore automatically re-resolve by container name, then compose project/service, and save the new ID. Open the project and use **Refresh container** to repair it manually; the restore error state also offers a refresh button.
+
+**`Archive ... does not exist` or an archive disappears after trim/prune**
+The archive catalog now reconciles with Borg automatically. If an imported archive was removed by retention, refresh the archive list from **Restore** or **Backups → Sync** and choose an existing archive. Imported archives use their original timestamps, so a duplicate/day collision can be pruned by the next backup. Do not include `.tar` in the imported archive name; the backend strips it.
 
 **`pg_dump: error: connection ... role ... does not exist`**
 Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is present in the container.

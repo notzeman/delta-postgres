@@ -44,6 +44,7 @@ import {
 import CronField from "../components/CronField";
 import Picker from "../components/Picker";
 import Tooltip from "../components/Tooltip";
+import ConfirmModal from "../components/ConfirmModal";
 import JobLogModal from "../components/JobLogModal";
 
 function DetailStat({
@@ -157,6 +158,7 @@ export default function ProjectDetail() {
       }),
     onSuccess: () => {
       setNotice("Archive deleted.");
+      setArchiveToDelete(null);
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
     },
@@ -194,6 +196,7 @@ export default function ProjectDetail() {
   const deleteProject = useMutation({
     mutationFn: () => api(`/projects/${projectId}`, { method: "DELETE" }),
     onSuccess: () => {
+      setConfirmIgnore(false);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["discovery"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
@@ -235,6 +238,8 @@ export default function ProjectDetail() {
   const [transferDrag, setTransferDrag] = useState(false);
   const [transferResult, setTransferResult] = useState("");
   const [transferError, setTransferError] = useState("");
+  const [archiveToDelete, setArchiveToDelete] = useState<string | null>(null);
+  const [confirmIgnore, setConfirmIgnore] = useState(false);
 
   const archiveDbsQuery = useQuery({
     queryKey: ["archive-databases", projectId, restore.archive],
@@ -319,11 +324,18 @@ export default function ProjectDetail() {
   });
 
   useEffect(() => {
-    if (!restore.archive && archives[0]) {
-      setRestore((current) => ({ ...current, archive: archives[0].name }));
-    }
     if (!exportArchive && archives[0]) setExportArchive(archives[0].name);
-  }, [archives, exportArchive, restore.archive]);
+    if (archives.length === 0) return;
+    setRestore((current) => {
+      if (archives.some((archive) => archive.name === current.archive)) return current;
+      return {
+        ...current,
+        archive: archives[0].name,
+        database: "",
+        target: "",
+      };
+    });
+  }, [archives, exportArchive]);
 
   useEffect(() => {
     if (!archiveDatabases || archiveDatabases.length === 0) return;
@@ -617,12 +629,8 @@ export default function ProjectDetail() {
                           <Tooltip content="Delete archive" side="left">
                             <button
                               onClick={() => {
-                                if (
-                                  window.confirm(
-                                    `Delete archive ${archive.name}? This cannot be undone.`,
-                                  )
-                                )
-                                  deleteArchive.mutate(archive.name);
+                                setError("");
+                                setArchiveToDelete(archive.name);
                               }}
                               className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-300"
                               aria-label="Delete archive"
@@ -760,7 +768,7 @@ export default function ProjectDetail() {
               {transferMode === "archive" ? (
                 <Field
                   label="Archive name"
-                  hint="Name used inside this project's repository. Must be unique."
+                  hint="Borg archive name inside this project. Do not include .tar; the backend strips it."
                 >
                   <Input
                     value={transferArchive}
@@ -858,25 +866,47 @@ export default function ProjectDetail() {
               }}
             >
               <Field label="Archive">
-                <Picker
-                  value={restore.archive}
-                  onChange={(next) =>
-                    setRestore((current) => ({ ...current, archive: next }))
-                  }
-                  options={archives.map((archive) => ({
-                    value: archive.name,
-                    label: archive.name,
-                    description: fmtDate(archive.created_at),
-                    icon: <FileArchive className="h-4 w-4" />,
-                  }))}
-                  placeholder="Select an archive…"
-                  searchable
-                  ariaLabel="Archive"
-                />
+                <div className="flex gap-2">
+                  <Picker
+                    value={restore.archive}
+                    onChange={(next) =>
+                      setRestore((current) => ({
+                        ...current,
+                        archive: next,
+                        database: "",
+                        target: "",
+                      }))
+                    }
+                    options={archives.map((archive) => ({
+                      value: archive.name,
+                      label: archive.name,
+                      description: fmtDate(archive.created_at),
+                      icon: <FileArchive className="h-4 w-4" />,
+                    }))}
+                    placeholder="Select an archive…"
+                    searchable
+                    ariaLabel="Archive"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => syncArchives.mutate()}
+                    loading={syncArchives.isPending}
+                    title="Refresh archive list"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
               </Field>
               <Field
                 label="Source database"
-                hint="A database dump from inside the selected archive"
+                hint={
+                  archiveDatabases
+                    ? `This archive contains ${archiveDatabases.length} database dump${
+                        archiveDatabases.length === 1 ? "" : "s"
+                      }.`
+                    : "A database dump from inside the selected archive"
+                }
               >
                 <Picker
                   value={restore.database}
@@ -1107,12 +1137,8 @@ export default function ProjectDetail() {
               <Button
                 variant="danger"
                 onClick={() => {
-                  if (
-                    window.confirm(
-                      `Move ${project.name} to Ignored? Its archives, jobs, and Borg repository will be kept.`,
-                    )
-                  )
-                    deleteProject.mutate();
+                  setError("");
+                  setConfirmIgnore(true);
                 }}
                 loading={deleteProject.isPending}
               >
@@ -1162,6 +1188,44 @@ export default function ProjectDetail() {
           </div>
         </Card>
       ) : null}
+
+      <ConfirmModal
+        open={Boolean(archiveToDelete)}
+        onClose={() => {
+          if (!deleteArchive.isPending) {
+            setArchiveToDelete(null);
+            setError("");
+          }
+        }}
+        onConfirm={() => archiveToDelete && deleteArchive.mutate(archiveToDelete)}
+        title="Delete archive?"
+        description={archiveToDelete}
+        confirmLabel="Delete archive"
+        loading={deleteArchive.isPending}
+        error={error}
+      >
+        This permanently removes the archive from the project&apos;s Borg repository. It cannot
+        be undone.
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={confirmIgnore}
+        onClose={() => {
+          if (!deleteProject.isPending) {
+            setConfirmIgnore(false);
+            setError("");
+          }
+        }}
+        onConfirm={() => deleteProject.mutate()}
+        title="Move project to Ignored?"
+        description={project.name}
+        confirmLabel="Move to Ignored"
+        loading={deleteProject.isPending}
+        error={error}
+      >
+        Archives, backup jobs, and the encrypted Borg repository will be kept. The project
+        disappears from Managed and auto-discovery will not re-add it.
+      </ConfirmModal>
 
       <JobLogModal jobId={logJob} onClose={() => setLogJob(null)} />
     </div>

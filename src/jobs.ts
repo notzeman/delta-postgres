@@ -322,6 +322,7 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
     );
 
     await pruneArchive(project, log);
+    await reconcileProjectArchives(project);
     checkCanceled(job.id);
 
     await pool.query(
@@ -497,7 +498,9 @@ export function stopJobWorker(): void {
 
 export async function syncProjectArchives(project: Project): Promise<void> {
   const archives = await listArchives(project);
+  const names: string[] = [];
   for (const archive of archives) {
+    names.push(archive.name);
     let stats = {
       originalSize: 0,
       compressedSize: 0,
@@ -536,6 +539,27 @@ export async function syncProjectArchives(project: Project): Promise<void> {
       ],
     );
   }
+  await removeMissingArchiveRows(project.id, names);
+}
+
+async function removeMissingArchiveRows(projectId: number, names: string[]): Promise<void> {
+  await pool.query(
+    `DELETE FROM archives
+     WHERE project_id = $1 AND NOT (name = ANY($2::text[]))`,
+    [projectId, names],
+  );
+}
+
+/**
+ * Cheap reconciliation used after prune/delete operations: list Borg archives
+ * and drop catalog rows that no longer exist in the repository.
+ */
+export async function reconcileProjectArchives(project: Project): Promise<void> {
+  const archives = await listArchives(project);
+  await removeMissingArchiveRows(
+    project.id,
+    archives.map((archive) => archive.name),
+  );
 }
 
 export function runningJobCount(): number {

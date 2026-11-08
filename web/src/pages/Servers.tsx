@@ -31,6 +31,7 @@ import {
   cn,
 } from "../components/ui";
 import Picker from "../components/Picker";
+import ConfirmModal from "../components/ConfirmModal";
 
 interface ServerForm {
   name: string;
@@ -344,6 +345,7 @@ export default function Servers() {
   });
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<DockerServer | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<DockerServer | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -386,6 +388,7 @@ export default function Servers() {
       api(`/servers/${id}${force ? "?force=true" : ""}`, { method: "DELETE" }),
     onSuccess: () => {
       setNotice("Server removed.");
+      setRemoveTarget(null);
       queryClient.invalidateQueries({ queryKey: ["servers"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["discovery"] });
@@ -538,16 +541,8 @@ export default function Servers() {
                       variant="danger"
                       className="ml-auto"
                       onClick={() => {
-                        const hasProjects = (server.projectCount || 0) > 0;
-                        if (
-                          window.confirm(
-                            hasProjects
-                              ? `${server.name} has ${server.projectCount} project(s). Remove the server and delete those project records? Backups stay on disk.`
-                              : `Remove ${server.name}?`,
-                          )
-                        ) {
-                          remove.mutate({ id: server.id, force: hasProjects });
-                        }
+                        setError("");
+                        setRemoveTarget(server);
                       }}
                       loading={remove.isPending && remove.variables?.id === server.id}
                     >
@@ -560,6 +555,38 @@ export default function Servers() {
           })}
         </div>
       )}
+
+      <ConfirmModal
+        open={Boolean(removeTarget)}
+        onClose={() => {
+          if (!remove.isPending) {
+            setRemoveTarget(null);
+            setError("");
+          }
+        }}
+        onConfirm={() =>
+          removeTarget &&
+          remove.mutate({
+            id: removeTarget.id,
+            force: (removeTarget.projectCount || 0) > 0,
+          })
+        }
+        title="Remove Docker server?"
+        description={removeTarget?.name}
+        confirmLabel="Remove server"
+        loading={remove.isPending}
+        error={error}
+      >
+        {removeTarget && (removeTarget.projectCount || 0) > 0 ? (
+          <>
+            This server still has <strong>{removeTarget.projectCount}</strong> project record
+            {removeTarget.projectCount === 1 ? "" : "s"}. Removing it deletes those project
+            records from the dashboard. Borg repository files remain on disk.
+          </>
+        ) : (
+          <>This removes only the server connection. No projects will be affected.</>
+        )}
+      </ConfirmModal>
 
       {modalOpen ? (
         <ServerFormModal

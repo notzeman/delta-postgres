@@ -209,7 +209,10 @@ export default function ImportExport() {
               />
             </Field>
             {mode === "archive" ? (
-              <Field label="Archive name" hint="Name to assign inside the project repository">
+              <Field
+                label="Archive name"
+                hint="Borg archive name inside the project repository. Do not include .tar."
+              >
                 <Input
                   value={archiveName}
                   onChange={(event) => setArchiveName(event.target.value)}

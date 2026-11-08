@@ -1096,18 +1096,32 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.get("/api/projects/:id/archives/:name/files", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
+    const name = archiveName(request);
     try {
-      return { files: await listArchiveFiles(project, archiveName(request)) };
+      return { files: await listArchiveFiles(project, name) };
     } catch (error) {
-      return sendError(reply, 500, error instanceof Error ? error.message : "Unable to list archive");
+      const message = error instanceof Error ? error.message : "Unable to list archive";
+      if (/does not exist|not found|no archive/i.test(message)) {
+        await pool.query(`DELETE FROM archives WHERE project_id = $1 AND name = $2`, [
+          project.id,
+          name,
+        ]);
+        return sendError(
+          reply,
+          404,
+          "Archive is no longer in the Borg repository. Refresh the archive list and choose another archive.",
+        );
+      }
+      return sendError(reply, 500, message);
     }
   });
 
   app.get("/api/projects/:id/archives/:name/databases", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
+    const name = archiveName(request);
     try {
-      const files = await listArchiveFiles(project, archiveName(request));
+      const files = await listArchiveFiles(project, name);
       const databases = files
         .map((file) => ({
           ...file,
@@ -1127,11 +1141,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         .sort((a, b) => a.name.localeCompare(b.name));
       return { databases };
     } catch (error) {
-      return sendError(
-        reply,
-        500,
-        error instanceof Error ? error.message : "Unable to read archive contents",
-      );
+      const message = error instanceof Error ? error.message : "Unable to read archive contents";
+      if (/does not exist|not found|no archive/i.test(message)) {
+        await pool.query(`DELETE FROM archives WHERE project_id = $1 AND name = $2`, [
+          project.id,
+          name,
+        ]);
+        return sendError(
+          reply,
+          404,
+          "Archive is no longer in the Borg repository. Refresh the archive list and choose another archive.",
+        );
+      }
+      return sendError(reply, 500, message);
     }
   });
 
@@ -1340,7 +1362,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     };
     const projectIdValue = fieldValue("projectId");
     const mode = fieldValue("mode") || "archive";
-    const archiveNameValue = fieldValue("archiveName");
+    const rawArchiveName = fieldValue("archiveName");
+    const archiveNameValue = rawArchiveName
+      ?.replace(/\.(tar|tgz|tar\.gz)$/i, "")
+      .trim();
     const parsedProjectId = Number(projectIdValue);
     if (!projectIdValue || !Number.isFinite(parsedProjectId)) {
       data.file.resume();
@@ -1355,6 +1380,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (mode === "archive" && !archiveNameValue) {
       data.file.resume();
       return sendError(reply, 400, "archiveName is required for archive import");
+    }
+    if (archiveNameValue && (archiveNameValue.includes("/") || archiveNameValue.includes(".."))) {
+      data.file.resume();
+      return sendError(reply, 400, "archiveName cannot contain slashes or '..'");
     }
 
     ensureDir(config.stagingRoot);
