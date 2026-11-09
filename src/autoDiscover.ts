@@ -91,7 +91,7 @@ export async function autoImportDiscoveredProjects(
       `INSERT INTO projects(name, slug, source, enabled, server_id, container_id,
          container_name, container_image, compose_project, pg_user, pg_default_db,
          databases, schedule_cron, notes, next_run_at)
-       VALUES($1, $2, 'auto', $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL, $11, $12)`,
+       VALUES($1, $2, 'auto', $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13)`,
       [
         item.name,
         slug,
@@ -103,6 +103,7 @@ export async function autoImportDiscoveredProjects(
         item.composeProject,
         primary.pgUser,
         primary.pgDefaultDb,
+        primary.pgDefaultDb ? JSON.stringify([primary.pgDefaultDb]) : null,
         "Auto-discovered from Docker Compose. Edit settings to customize.",
         nextRun,
       ],

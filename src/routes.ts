@@ -1211,17 +1211,66 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
     const server = await getServer(project.server_id);
     if (!server) return sendError(reply, 404, "Docker server not found");
+
     const lines: string[] = [];
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    const send = (event: Record<string, unknown>) => {
+      try {
+        reply.raw.write(`${JSON.stringify(event)}\n`);
+      } catch {
+        /* client disconnected */
+      }
+    };
+    const progress = (percent: number, label: string) =>
+      send({ type: "progress", percent, label });
+
     try {
+      progress(5, "Resolving container…");
       const { container, changed, previous } = await resolveProjectContainer(project, server);
       if (changed) {
-        lines.push(
-          `Re-linked container: ${previous.name || previous.id || "unknown"} -> ${container.name} (${container.id.slice(0, 12)})`,
-        );
+        send({
+          type: "log",
+          message: `Re-linked container: ${previous.name || previous.id || "unknown"} -> ${container.name} (${container.id.slice(0, 12)})`,
+        });
       }
       if (container.state !== "running") {
-        return sendError(reply, 409, `Container ${container.name} is not running`);
+        throw new Error(`Container ${container.name} is not running`);
       }
+      progress(15, "Preparing target database…");
+
+      const log = (line: string) => {
+        lines.push(line);
+        let percent: number | null = null;
+        let label = "";
+        if (/Terminating connections/i.test(line)) {
+          percent = 20;
+          label = "Preparing target database…";
+        } else if (/Dropping database/i.test(line)) {
+          percent = 24;
+          label = "Preparing target database…";
+        } else if (/Creating database/i.test(line)) {
+          percent = 28;
+          label = "Creating target database…";
+        } else if (/Extracting/i.test(line)) {
+          percent = 38;
+          label = "Extracting dump from Borg…";
+        } else if (/Copying dump/i.test(line)) {
+          percent = 55;
+          label = "Copying dump into container…";
+        } else if (/Restoring into/i.test(line)) {
+          percent = 70;
+          label = "Restoring database objects…";
+        }
+        if (percent !== null) progress(percent, label);
+        send({ type: "log", message: line });
+      };
+
       await restoreDatabase(
         project,
         server,
@@ -1230,21 +1279,26 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         memberPath,
         body.data.targetDatabase,
         Boolean(body.data.overwrite),
-        (line) => lines.push(line),
+        log,
       );
+      progress(100, "Restore complete");
+      send({ type: "done", output: lines.join("\n") });
       await audit(getActor(request), "archive.restore", `${project.slug}/${body.data.archive}`, {
         targetDatabase: body.data.targetDatabase,
         overwrite: body.data.overwrite,
         container: container.name,
-      });
-      return { ok: true, output: lines.join("\n") };
+      }).catch(() => {});
     } catch (error) {
       const message = error instanceof Error ? error.message : "Restore failed";
-      const status = /No matching PostgreSQL container|not found|no such container/i.test(message)
-        ? 404
-        : 500;
-      return sendError(reply, status, message);
+      send({ type: "error", error: message, output: lines.join("\n") });
+      await audit(getActor(request), "archive.restore.failed", `${project.slug}/${body.data.archive}`, {
+        targetDatabase: body.data.targetDatabase,
+        error: message,
+      }).catch(() => {});
+    } finally {
+      reply.raw.end();
     }
+    return reply;
   });
 
   app.get("/api/projects/:id/archives/:name/export", async (request, reply) => {

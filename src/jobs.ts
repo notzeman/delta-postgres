@@ -196,8 +196,18 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
     log(`Using selected databases: ${databases.join(", ")}`);
   } else {
     const dbs = await containerDatabases(container.id, pgUser, server);
-    databases = dbs.map((d) => d.name);
-    log(`Discovered databases: ${databases.join(", ")}`);
+    const names = dbs.map((d) => d.name);
+    const primary =
+      project.pg_default_db ||
+      container.env.POSTGRES_DB ||
+      names.find((name) => name !== "postgres") ||
+      names[0];
+    if (primary && names.includes(primary)) {
+      databases = [primary];
+    } else {
+      databases = names.filter((name) => name !== "postgres").slice(0, 1);
+    }
+    log(`Using primary database: ${databases.join(", ") || "none"}`);
   }
   if (databases.length === 0) throw new Error("No databases found to back up");
 

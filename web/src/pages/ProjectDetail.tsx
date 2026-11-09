@@ -47,6 +47,7 @@ import Tooltip from "../components/Tooltip";
 import ConfirmModal from "../components/ConfirmModal";
 import UnsavedChangesGuard from "../components/UnsavedChangesGuard";
 import JobLogModal from "../components/JobLogModal";
+import { useSnackbar } from "../components/Snackbar";
 
 function DetailStat({
   label,
@@ -71,6 +72,7 @@ export default function ProjectDetail() {
   const projectId = Number(id);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const snackbar = useSnackbar();
   const [tab, setTab] = useState("overview");
   const [logJob, setLogJob] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
@@ -232,13 +234,18 @@ export default function ProjectDetail() {
 
   const [restore, setRestore] = useState({
     archive: "",
-    database: "",
-    target: "",
     overwrite: false,
     confirm: "",
   });
+  const [restoreNonce, setRestoreNonce] = useState(() => Date.now());
   const [restoreOutput, setRestoreOutput] = useState("");
   const [restoreError, setRestoreError] = useState("");
+  const [restoreProgress, setRestoreProgress] = useState({
+    running: false,
+    percent: 0,
+    label: "Ready to restore",
+    done: false,
+  });
   const [exportArchive, setExportArchive] = useState("");
   const [transferMode, setTransferMode] = useState("archive");
   const [transferArchive, setTransferArchive] = useState(
@@ -261,28 +268,139 @@ export default function ProjectDetail() {
   });
   const archiveDatabases = archiveDbsQuery.data?.databases;
 
-  const restoreMutation = useMutation({
-    mutationFn: () =>
-      api<{ ok: boolean; output: string }>(`/projects/${projectId}/restore`, {
+  const primaryDb =
+    project?.pg_default_db ||
+    container?.databases?.find((db) => db.name !== "postgres")?.name ||
+    "";
+  const safePrimary = (primaryDb || "database").replace(/[^a-zA-Z0-9_]/g, "_");
+  const selectedDump =
+    archiveDatabases?.find((db) => db.name === primaryDb) ||
+    archiveDatabases?.find((db) => db.name !== "postgres") ||
+    archiveDatabases?.[0] ||
+    null;
+  const scratchTarget = `restore_${safePrimary}_${new Date(restoreNonce)
+    .toISOString()
+    .replace(/\D/g, "")
+    .slice(0, 14)}`;
+  const overwriteTarget = selectedDump?.name || primaryDb;
+  const targetDb = restore.overwrite ? overwriteTarget : scratchTarget;
+
+  const runRestore = async () => {
+    const member = selectedDump;
+    if (!member) {
+      snackbar.error("No database dump was found in this archive.");
+      return;
+    }
+    if (!targetDb) {
+      snackbar.error("Unable to determine the target database.");
+      return;
+    }
+    setRestoreOutput("");
+    setRestoreError("");
+    setRestoreProgress({
+      running: true,
+      percent: 0,
+      label: "Starting restore…",
+      done: false,
+    });
+
+    let output = "";
+    const appendLog = (message: string) => {
+      output += `${message}\n`;
+      setRestoreOutput(output);
+    };
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/restore`, {
         method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           archive: restore.archive,
-          database: restore.database,
-          memberPath: archiveDatabases?.find((db) => db.name === restore.database)?.path,
-          targetDatabase: restore.target,
+          database: member.name,
+          memberPath: member.path,
+          targetDatabase: targetDb,
           overwrite: restore.overwrite,
         }),
-      }),
-    onSuccess: (data) => {
-      setRestoreOutput(data.output || "Restore completed.");
-      setRestoreError("");
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-    },
-    onError: (err) => {
-      setRestoreOutput("");
-      setRestoreError(err instanceof Error ? err.message : "Restore failed");
-    },
-  });
+      });
+
+      if (response.status === 401) {
+        window.dispatchEvent(new Event("dp:unauthorized"));
+      }
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as any).error || `Restore failed (${response.status})`,
+        );
+      }
+      if (!response.body) throw new Error("Restore stream unavailable");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawDone = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let event: any;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (event.type === "progress") {
+            setRestoreProgress((current) => ({
+              ...current,
+              percent: Number(event.percent) || current.percent,
+              label: String(event.label || current.label),
+            }));
+          } else if (event.type === "log") {
+            appendLog(String(event.message || ""));
+          } else if (event.type === "done") {
+            sawDone = true;
+            const finalOutput = String(event.output || output);
+            setRestoreOutput(finalOutput);
+            setRestoreProgress({
+              running: false,
+              percent: 100,
+              label: "Restore complete",
+              done: true,
+            });
+            setRestoreNonce(Date.now());
+            snackbar.success(
+              restore.overwrite
+                ? `Restore completed into ${targetDb}.`
+                : `Restore completed into new database ${targetDb}.`,
+            );
+            queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+            queryClient.invalidateQueries({ queryKey: ["projects"] });
+          } else if (event.type === "error") {
+            throw new Error(String(event.error || "Restore failed"));
+          }
+        }
+      }
+
+      if (!sawDone) {
+        throw new Error("Restore stream ended unexpectedly");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Restore failed";
+      setRestoreError(message);
+      setRestoreProgress({
+        running: false,
+        percent: 100,
+        label: "Restore failed",
+        done: false,
+      });
+      snackbar.error(message);
+    }
+  };
 
   const importMutation = useMutation({
     mutationFn: async () => {
@@ -341,24 +459,20 @@ export default function ProjectDetail() {
       return {
         ...current,
         archive: archives[0].name,
-        database: "",
-        target: "",
       };
     });
   }, [archives, exportArchive]);
 
   useEffect(() => {
-    if (!archiveDatabases || archiveDatabases.length === 0) return;
-    setRestore((current) => {
-      if (archiveDatabases.some((db) => db.name === current.database)) return current;
-      const db = archiveDatabases[0];
-      return {
-        ...current,
-        database: db.name,
-        target: `restore_${db.name}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
-      };
+    setRestoreProgress({
+      running: false,
+      percent: 0,
+      label: "Ready to restore",
+      done: false,
     });
-  }, [archiveDatabases]);
+    setRestoreOutput("");
+    setRestoreError("");
+  }, [restore.archive]);
 
   if (projectQuery.isLoading) return <Spinner label="Loading project…" />;
   if (!project) {
@@ -871,8 +985,7 @@ export default function ProjectDetail() {
               className="space-y-4 p-5"
               onSubmit={(event) => {
                 event.preventDefault();
-                setRestoreOutput("");
-                restoreMutation.mutate();
+                void runRestore();
               }}
             >
               <Field label="Archive">
@@ -895,6 +1008,7 @@ export default function ProjectDetail() {
                     }))}
                     placeholder="Select an archive…"
                     searchable
+                    disabled={restoreProgress.running}
                     ariaLabel="Archive"
                     className="flex-1"
                   />
@@ -902,6 +1016,7 @@ export default function ProjectDetail() {
                     type="button"
                     onClick={() => syncArchives.mutate()}
                     loading={syncArchives.isPending}
+                    disabled={restoreProgress.running}
                     title="Refresh archive list"
                   >
                     <RefreshCw className="h-4 w-4" />
@@ -909,51 +1024,29 @@ export default function ProjectDetail() {
                 </div>
               </Field>
               {archiveDbsQuery.isLoading ? (
-                <Field label="Database dump" hint="Reading the selected archive…">
+                <Field label="Dump file" hint="Reading the selected archive…">
                   <div className="input text-slate-500">Loading archive contents…</div>
                 </Field>
-              ) : archiveDatabases && archiveDatabases.length === 1 ? (
+              ) : selectedDump ? (
                 <Field
-                  label="Database dump"
-                  hint="Only this dump file is restored. The archive contains one database."
+                  label="Dump file"
+                  hint={
+                    selectedDump.name !== primaryDb
+                      ? `Primary database ${primaryDb || "unknown"} was not found in this archive; using ${selectedDump.name}.`
+                      : "Automatically selected from this archive."
+                  }
                 >
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-ink-950/60 px-3 py-2 text-xs">
                     <span className="flex min-w-0 items-center gap-2">
                       <Database className="h-4 w-4 shrink-0 text-accent-400" />
                       <span className="truncate font-mono text-slate-200">
-                        {archiveDatabases[0].path}
+                        {selectedDump.path}
                       </span>
                     </span>
                     <span className="shrink-0 text-slate-500">
-                      {formatBytes(archiveDatabases[0].sizeBytes)}
+                      {formatBytes(selectedDump.sizeBytes)}
                     </span>
                   </div>
-                </Field>
-              ) : archiveDatabases && archiveDatabases.length > 1 ? (
-                <Field
-                  label="Database dump"
-                  hint={`This archive contains ${archiveDatabases.length} separate dump files. Choose which one to restore.`}
-                >
-                  <Picker
-                    value={restore.database}
-                    onChange={(next) => {
-                      setRestore((current) => ({
-                        ...current,
-                        database: next,
-                        target: `restore_${next}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
-                      }));
-                    }}
-                    options={archiveDatabases.map((db) => ({
-                      value: db.name,
-                      label: db.name,
-                      description: `${db.path} · ${formatBytes(db.sizeBytes)}`,
-                      icon: <Database className="h-4 w-4" />,
-                    }))}
-                    placeholder="Select a database dump…"
-                    searchable
-                    disabled={!restore.archive}
-                    ariaLabel="Database dump"
-                  />
                 </Field>
               ) : null}
               {archiveDbsQuery.isError ? (
@@ -970,35 +1063,60 @@ export default function ProjectDetail() {
               archiveDatabases.length === 0 ? (
                 <ErrorBox message="No database dumps found in this archive." />
               ) : null}
-              <Field label="Target database" hint="A new database is created by default.">
-                <Input
-                  value={restore.target}
-                  onChange={(event) =>
-                    setRestore((current) => ({ ...current, target: event.target.value }))
-                  }
-                  pattern="[a-zA-Z0-9_]+"
-                  required
-                />
-              </Field>
+
+              <div className="rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500">Target container</span>
+                  <span className="truncate font-mono text-slate-200">
+                    {container?.name || project.container_name || "—"}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-3">
+                  <span className="text-slate-500">Target database</span>
+                  <span className="truncate font-mono text-slate-200">
+                    {targetDb || "—"}
+                  </span>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  {restore.overwrite
+                    ? `The database "${targetDb}" will be dropped and recreated before restoring.`
+                    : "A new scratch database will be created automatically. The existing database is untouched."}
+                </p>
+              </div>
+
               <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
                 <Checkbox
                   tone="warning"
                   checked={restore.overwrite}
+                  disabled={restoreProgress.running}
                   onChange={(checked) =>
-                    setRestore((current) => ({ ...current, overwrite: checked }))
+                    setRestore((current) => ({
+                      ...current,
+                      overwrite: checked,
+                      confirm: "",
+                    }))
                   }
-                  label="Overwrite the target database if it exists"
-                  description="This terminates connections and drops the target before restoring."
+                  label="Overwrite the existing database"
+                  description={
+                    restore.overwrite
+                      ? `Drops and recreates "${targetDb}" in the container. This disconnects clients.`
+                      : "Leave disabled to restore into a new scratch database. Enable to wipe the existing primary database and restore in place."
+                  }
                 />
               </div>
               {restore.overwrite ? (
-                <Field label={`Type "${restore.target}" to confirm`}>
+                <Field
+                  label="Type CONFIRM to wipe the existing database"
+                  hint="This permanently replaces the current database contents."
+                >
                   <Input
                     value={restore.confirm}
                     onChange={(event) =>
                       setRestore((current) => ({ ...current, confirm: event.target.value }))
                     }
+                    placeholder="CONFIRM"
                     className="font-mono"
+                    disabled={restoreProgress.running}
                   />
                 </Field>
               ) : null}
@@ -1017,19 +1135,19 @@ export default function ProjectDetail() {
               ) : null}
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[11px] text-slate-500">
-                  Restores into the project&apos;s current PostgreSQL container. The container is
-                  re-resolved automatically.
+                  The dump and target are selected automatically for the project&apos;s primary
+                  database.
                 </p>
                 <Button
                   type="submit"
                   variant="primary"
-                  loading={restoreMutation.isPending}
+                  loading={restoreProgress.running}
                   disabled={
+                    restoreProgress.running ||
                     !restore.archive ||
-                    !restore.database ||
-                    !restore.target ||
-                    !archiveDatabases?.some((db) => db.name === restore.database) ||
-                    (restore.overwrite && restore.confirm !== restore.target)
+                    !selectedDump ||
+                    !targetDb ||
+                    (restore.overwrite && restore.confirm !== "CONFIRM")
                   }
                 >
                   <UploadCloud className="h-4 w-4" /> Restore
@@ -1038,10 +1156,69 @@ export default function ProjectDetail() {
             </form>
           </Card>
           <Card>
-            <CardHeader title="Restore output" subtitle="Borg extraction and pg_restore log" />
+            <CardHeader
+              title="Restore output"
+              subtitle="Live Borg extraction and pg_restore progress"
+              action={
+                restoreProgress.done ? (
+                  <Badge tone="green">
+                    <CheckCircle2 className="h-3 w-3" /> complete
+                  </Badge>
+                ) : restoreProgress.running ? (
+                  <Badge tone="blue">running</Badge>
+                ) : null
+              }
+            />
+            <div className="border-b border-white/5 px-5 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <span
+                  className={cn(
+                    "flex items-center gap-1.5 text-xs font-medium",
+                    restoreError
+                      ? "text-rose-300"
+                      : restoreProgress.done
+                        ? "text-emerald-300"
+                        : "text-slate-300",
+                  )}
+                >
+                  {restoreProgress.done ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : restoreProgress.running ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  {restoreProgress.label}
+                </span>
+                <span className="font-mono text-[11px] text-slate-500">
+                  {restoreProgress.percent}%
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/5">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all duration-500",
+                    restoreError
+                      ? "bg-rose-400"
+                      : restoreProgress.done
+                        ? "bg-emerald-400"
+                        : "bg-accent-500",
+                    restoreProgress.running && "animate-pulse",
+                  )}
+                  style={{ width: `${Math.max(2, restoreProgress.percent)}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                {restoreProgress.running
+                  ? "Restore is running. Keep this tab open."
+                  : restoreProgress.done
+                    ? "Restore completed successfully."
+                    : restoreError
+                      ? restoreError
+                      : "Run a restore to see live progress."}
+              </p>
+            </div>
             <pre className="max-h-[420px] min-h-[240px] overflow-auto p-5 font-mono text-[11px] leading-relaxed text-slate-300">
-              {restoreMutation.isPending
-                ? "Restore in progress…"
+              {restoreProgress.running
+                ? restoreOutput || "Waiting for restore output…"
                 : restoreOutput || "The restore log will appear here."}
             </pre>
           </Card>
