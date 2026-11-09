@@ -480,29 +480,57 @@ export async function restoreDatabase(
     await extractArchiveFile(project, archive, memberPath, tempFile, log);
     log(`Copying dump into container ${container.name}`);
     containerFile = await copyFileToContainer(containerId, tempFile, "/tmp", server);
-    log(`Restoring into ${targetDb}`);
-    const result = await execCapture(
-      containerId,
-      [
-        "pg_restore",
-        "-U",
-        pgUser,
-        "-d",
-        targetDb,
-        "--no-owner",
-        "--no-privileges",
-        containerFile,
-      ],
-      {},
-      server,
-    );
-    if (result.stderr.trim()) {
-      for (const line of result.stderr.split(/\r?\n/)) {
+    const plainSql = memberPath.toLowerCase().endsWith(".sql");
+    if (plainSql) {
+      log("Applying SQL dump with psql");
+    } else {
+      log(`Restoring into ${targetDb}`);
+    }
+    const result = plainSql
+      ? await execCapture(
+          containerId,
+          [
+            "psql",
+            "-U",
+            pgUser,
+            "-d",
+            targetDb,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-q",
+            "-o",
+            "/dev/null",
+            "-f",
+            containerFile,
+          ],
+          {},
+          server,
+        )
+      : await execCapture(
+          containerId,
+          [
+            "pg_restore",
+            "-U",
+            pgUser,
+            "-d",
+            targetDb,
+            "--no-owner",
+            "--no-privileges",
+            containerFile,
+          ],
+          {},
+          server,
+        );
+    for (const text of [result.stdout, result.stderr]) {
+      if (!text.trim()) continue;
+      for (const line of text.split(/\r?\n/)) {
         if (line.trim()) log(line);
       }
     }
     if (result.exitCode !== 0) {
-      throw new Error(`pg_restore failed with exit code ${result.exitCode}`);
+      throw new Error(
+        `${plainSql ? "psql" : "pg_restore"} failed with exit code ${result.exitCode}`,
+      );
     }
   } finally {
     if (containerFile) {

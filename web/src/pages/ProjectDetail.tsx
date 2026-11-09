@@ -255,6 +255,9 @@ export default function ProjectDetail() {
   const [transferDrag, setTransferDrag] = useState(false);
   const [transferResult, setTransferResult] = useState("");
   const [transferError, setTransferError] = useState("");
+  const [importRestoreNow, setImportRestoreNow] = useState(true);
+  const [importOverwrite, setImportOverwrite] = useState(false);
+  const [importConfirm, setImportConfirm] = useState("");
   const [archiveToDelete, setArchiveToDelete] = useState<string | null>(null);
   const [confirmIgnore, setConfirmIgnore] = useState(false);
 
@@ -285,16 +288,13 @@ export default function ProjectDetail() {
   const overwriteTarget = selectedDump?.name || primaryDb;
   const targetDb = restore.overwrite ? overwriteTarget : scratchTarget;
 
-  const runRestore = async () => {
-    const member = selectedDump;
-    if (!member) {
-      snackbar.error("No database dump was found in this archive.");
-      return;
-    }
-    if (!targetDb) {
-      snackbar.error("Unable to determine the target database.");
-      return;
-    }
+  const streamRestore = async (params: {
+    archive: string;
+    database: string;
+    memberPath: string;
+    targetDatabase: string;
+    overwrite: boolean;
+  }) => {
     setRestoreOutput("");
     setRestoreError("");
     setRestoreProgress({
@@ -315,13 +315,7 @@ export default function ProjectDetail() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          archive: restore.archive,
-          database: member.name,
-          memberPath: member.path,
-          targetDatabase: targetDb,
-          overwrite: restore.overwrite,
-        }),
+        body: JSON.stringify(params),
       });
 
       if (response.status === 401) {
@@ -374,9 +368,9 @@ export default function ProjectDetail() {
             });
             setRestoreNonce(Date.now());
             snackbar.success(
-              restore.overwrite
-                ? `Restore completed into ${targetDb}.`
-                : `Restore completed into new database ${targetDb}.`,
+              params.overwrite
+                ? `Restore completed into ${params.targetDatabase}.`
+                : `Restore completed into new database ${params.targetDatabase}.`,
             );
             queryClient.invalidateQueries({ queryKey: ["project", projectId] });
             queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -402,6 +396,24 @@ export default function ProjectDetail() {
     }
   };
 
+  const runRestore = async () => {
+    if (!selectedDump) {
+      snackbar.error("No database dump was found in this archive.");
+      return;
+    }
+    if (!targetDb) {
+      snackbar.error("Unable to determine the target database.");
+      return;
+    }
+    await streamRestore({
+      archive: restore.archive,
+      database: selectedDump.name,
+      memberPath: selectedDump.path,
+      targetDatabase: targetDb,
+      overwrite: restore.overwrite,
+    });
+  };
+
   const importMutation = useMutation({
     mutationFn: async () => {
       if (!transferFile) throw new Error("Choose a .tar file first");
@@ -425,6 +437,64 @@ export default function ProjectDetail() {
     onError: (err) => {
       setTransferResult("");
       setTransferError(err instanceof Error ? err.message : "Import failed");
+    },
+  });
+
+  const importDump = useMutation({
+    mutationFn: async () => {
+      if (!transferFile) throw new Error("Choose a PostgreSQL dump file first");
+      const form = new FormData();
+      if (transferArchive.trim()) form.append("archiveName", transferArchive.trim());
+      form.append("file", transferFile);
+      return api<{
+        ok: boolean;
+        archive: {
+          name: string;
+          database: string;
+          memberPath: string;
+          format: string;
+          sizeBytes: number;
+        };
+        output: string;
+      }>(`/projects/${projectId}/import-dump`, {
+        method: "POST",
+        body: form,
+      });
+    },
+    onSuccess: async (data) => {
+      setTransferError("");
+      setTransferResult(`Dump stored as "${data.archive.name}".`);
+      await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["archive-databases", projectId] });
+      snackbar.success(`Dump stored as Borg archive "${data.archive.name}".`);
+
+      if (importRestoreNow) {
+        const target = importOverwrite
+          ? primaryDb || data.archive.database
+          : `restore_${(primaryDb || data.archive.database).replace(
+              /[^a-zA-Z0-9_]/g,
+              "_",
+            )}_${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
+        setRestore({
+          archive: data.archive.name,
+          overwrite: importOverwrite,
+          confirm: importOverwrite ? "CONFIRM" : "",
+        });
+        setTab("restore");
+        await streamRestore({
+          archive: data.archive.name,
+          database: data.archive.database,
+          memberPath: data.archive.memberPath,
+          targetDatabase: target,
+          overwrite: importOverwrite,
+        });
+      }
+    },
+    onError: (err) => {
+      setTransferResult("");
+      setTransferError(err instanceof Error ? err.message : "Dump import failed");
     },
   });
 
@@ -462,17 +532,6 @@ export default function ProjectDetail() {
       };
     });
   }, [archives, exportArchive]);
-
-  useEffect(() => {
-    setRestoreProgress({
-      running: false,
-      percent: 0,
-      label: "Ready to restore",
-      done: false,
-    });
-    setRestoreOutput("");
-    setRestoreError("");
-  }, [restore.archive]);
 
   if (projectQuery.isLoading) return <Spinner label="Loading project…" />;
   if (!project) {
@@ -857,7 +916,7 @@ export default function ProjectDetail() {
           <Card>
             <CardHeader
               title="Import into this project"
-              subtitle="Upload a Borg archive tar or a full repository tar"
+              subtitle="Upload a Borg archive, full repository, or raw PostgreSQL dump"
               action={<UploadCloud className="h-4 w-4 text-slate-500" />}
             />
             <form
@@ -866,7 +925,8 @@ export default function ProjectDetail() {
                 event.preventDefault();
                 setTransferResult("");
                 setTransferError("");
-                importMutation.mutate();
+                if (transferMode === "dump") importDump.mutate();
+                else importMutation.mutate();
               }}
             >
               <Field label="Import mode">
@@ -876,29 +936,38 @@ export default function ProjectDetail() {
                   options={[
                     {
                       value: "archive",
-                      label: "Single archive",
-                      description: "Add one archive to this project with borg import-tar",
+                      label: "Borg archive",
+                      description: "Add one exported archive with borg import-tar",
                     },
                     {
                       value: "repo",
                       label: "Full repository",
                       description: "Replace this project's Borg repository",
                     },
+                    {
+                      value: "dump",
+                      label: "PostgreSQL dump file",
+                      description: "Store .sql/.dump/.backup/.tar in Borg and optionally restore it",
+                    },
                   ]}
                   ariaLabel="Import mode"
                 />
               </Field>
 
-              {transferMode === "archive" ? (
+              {transferMode === "archive" || transferMode === "dump" ? (
                 <Field
                   label="Archive name"
-                  hint="Borg archive name inside this project. Do not include .tar; the backend strips it."
+                  hint={
+                    transferMode === "dump"
+                      ? "Optional. Borg archive name for the imported dump."
+                      : "Borg archive name inside this project. Do not include .tar; the backend strips it."
+                  }
                 >
                   <Input
                     value={transferArchive}
                     onChange={(event) => setTransferArchive(event.target.value)}
                     className="font-mono"
-                    required
+                    required={transferMode === "archive"}
                   />
                 </Field>
               ) : (
@@ -931,23 +1000,99 @@ export default function ProjectDetail() {
                   <UploadCloud className="h-5 w-5" />
                 </div>
                 <p className="text-xs font-medium text-slate-200">
-                  {transferFile ? transferFile.name : "Drop a .tar file here or click to browse"}
+                  {transferFile
+                    ? transferFile.name
+                    : transferMode === "dump"
+                      ? "Drop a .sql, .dump, .backup, or .tar file here"
+                      : "Drop a .tar file here or click to browse"}
                 </p>
                 <p className="text-[11px] text-slate-500">
                   {transferFile
                     ? formatBytes(transferFile.size)
-                    : "Archive tar or full repository tar · up to 50 GB"}
+                    : transferMode === "dump"
+                      ? "PostgreSQL dump · up to 50 GB"
+                      : "Archive tar or full repository tar · up to 50 GB"}
                 </p>
                 <input
                   type="file"
                   className="sr-only"
-                  accept=".tar,.tgz,.gz,application/x-tar"
+                  accept={
+                    transferMode === "dump"
+                      ? ".sql,.dump,.backup,.tar,application/sql,application/octet-stream"
+                      : ".tar,.tgz,.gz,application/x-tar"
+                  }
                   onChange={(event) => setTransferFile(event.target.files?.[0] || null)}
                 />
               </label>
 
+              {transferMode === "dump" ? (
+                <>
+                  <p className="text-[11px] text-slate-500">
+                    Use a single-database <span className="font-mono">pg_dump</span> file
+                    (.sql / .dump / .backup / .tar). <span className="font-mono">pg_dumpall</span>{
+                      " "
+                    }
+                    cluster archives are not supported.
+                  </p>
+                  <div className="rounded-xl border border-white/5 bg-ink-950/40 p-3">
+                    <Switch
+                      checked={importRestoreNow}
+                      onChange={setImportRestoreNow}
+                      label="Restore after import"
+                      description="Store the dump in Borg, then immediately restore it into this project."
+                    />
+                  </div>
+                  {importRestoreNow ? (
+                    <>
+                      <div className="rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-slate-500">Target container</span>
+                          <span className="truncate font-mono text-slate-200">
+                            {container?.name || project.container_name || "—"}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-3">
+                          <span className="text-slate-500">Target database</span>
+                          <span className="truncate font-mono text-slate-200">
+                            {importOverwrite
+                              ? primaryDb || "project primary database"
+                              : "new scratch database"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                        <Checkbox
+                          tone="warning"
+                          checked={importOverwrite}
+                          onChange={(checked) => {
+                            setImportOverwrite(checked);
+                            setImportConfirm("");
+                          }}
+                          label="Overwrite the primary database"
+                          description={
+                            importOverwrite
+                              ? "The primary database will be dropped and recreated before restoring."
+                              : "Leave disabled to restore into a new scratch database."
+                          }
+                        />
+                      </div>
+                      {importOverwrite ? (
+                        <Field label="Type CONFIRM to wipe the primary database">
+                          <Input
+                            value={importConfirm}
+                            onChange={(event) => setImportConfirm(event.target.value)}
+                            placeholder="CONFIRM"
+                            className="font-mono"
+                          />
+                        </Field>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+
               {transferError ? <ErrorBox message={transferError} /> : null}
-              {transferResult ? (
+              {transferResult && (transferMode !== "dump" || !importRestoreNow) ? (
                 <div className="max-h-32 overflow-auto rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 font-mono text-[11px] text-emerald-300">
                   {transferResult}
                 </div>
@@ -960,13 +1105,18 @@ export default function ProjectDetail() {
                 <Button
                   type="submit"
                   variant="primary"
-                  loading={importMutation.isPending}
+                  loading={importMutation.isPending || importDump.isPending}
                   disabled={
                     !transferFile ||
-                    (transferMode === "archive" && !transferArchive.trim())
+                    (transferMode === "archive" && !transferArchive.trim()) ||
+                    (transferMode === "dump" &&
+                      importRestoreNow &&
+                      importOverwrite &&
+                      importConfirm !== "CONFIRM")
                   }
                 >
-                  <UploadCloud className="h-4 w-4" /> Import backup
+                  <UploadCloud className="h-4 w-4" />{" "}
+                  {transferMode === "dump" ? "Import dump" : "Import backup"}
                 </Button>
               </div>
             </form>
@@ -992,14 +1142,17 @@ export default function ProjectDetail() {
                 <div className="flex gap-2">
                   <Picker
                     value={restore.archive}
-                    onChange={(next) =>
-                      setRestore((current) => ({
-                        ...current,
-                        archive: next,
-                        database: "",
-                        target: "",
-                      }))
-                    }
+                    onChange={(next) => {
+                      setRestore({ archive: next, overwrite: false, confirm: "" });
+                      setRestoreOutput("");
+                      setRestoreError("");
+                      setRestoreProgress({
+                        running: false,
+                        percent: 0,
+                        label: "Ready to restore",
+                        done: false,
+                      });
+                    }}
                     options={archives.map((archive) => ({
                       value: archive.name,
                       label: archive.name,

@@ -52,6 +52,7 @@ export interface ArchiveDatabase {
   name: string;
   path: string;
   sizeBytes: number;
+  format?: "plain" | "archive";
 }
 
 export interface Job {

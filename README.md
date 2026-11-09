@@ -246,9 +246,12 @@ Restores are non-destructive by default. Overwrite is the explicit destructive p
 | Single archive | `.tar` (`borg export-tar`) | Project → Import / export |
 | Single project repo | `.tar` of the encrypted repo | Project → Import / export |
 | Import archive/repo | `.tar` upload | Project → Import / export |
+| Import raw PostgreSQL dump | `.sql` / `.dump` / `.backup` / `.tar` | Project → Import / export → PostgreSQL dump file |
 | All repositories | `.tar` of `backups/` | Import/Export → All repositories |
 
 Open a project and use the **Import / export** tab to download its full repository or a specific archive, and to upload a new archive or replace the repository — all scoped to that project. Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
+
+**Raw PostgreSQL dump import** stores the uploaded file as a new Borg archive and can immediately restore it into the project’s primary database. `.sql` files are applied with `psql`; custom `.dump`/`.backup` and `pg_dump` `.tar` files use `pg_restore`. Use a single-database `pg_dump` rather than `pg_dumpall`.
 
 An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The default backup includes only the primary database, so most archives contain exactly one dump. If multiple databases were selected in project settings, the archive contains multiple dumps; restore still auto-selects the primary one.
 

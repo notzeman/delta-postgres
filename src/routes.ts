@@ -53,6 +53,8 @@ import {
   repoSizeBytes,
   projectBackupDir,
   listArchiveFiles,
+  listArchives,
+  createArchive,
   deleteArchive,
   checkArchive,
   exportArchiveStream,
@@ -75,7 +77,7 @@ import {
   recomputeProjectSchedule,
   recomputeAllSchedules,
 } from "./scheduler";
-import { runCommand, slugify, formatBytes, ensureDir, rmrf } from "./utils";
+import { runCommand, slugify, formatBytes, ensureDir, rmrf, fileSize, hashFile } from "./utils";
 
 function sendError(reply: FastifyReply, code: number, message: string) {
   return reply.code(code).send({ error: message });
@@ -1130,14 +1132,18 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         .filter(
           (file) =>
             file.type === "file" &&
-            file.path.startsWith("databases/") &&
-            file.path.endsWith(".dump"),
+            /^databases\/.+\.(dump|sql|backup|tar)$/i.test(file.path),
         )
-        .map((file) => ({
-          name: file.path.slice("databases/".length, -".dump".length),
-          path: file.path,
-          sizeBytes: file.size,
-        }))
+        .map((file) => {
+          const base = file.path.slice("databases/".length);
+          const ext = (base.split(".").pop() || "").toLowerCase();
+          return {
+            name: base.slice(0, -(ext.length + 1)),
+            path: file.path,
+            sizeBytes: file.size,
+            format: ext === "sql" ? "plain" : "archive",
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name));
       return { databases };
     } catch (error) {
@@ -1263,7 +1269,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         } else if (/Copying dump/i.test(line)) {
           percent = 55;
           label = "Copying dump into container…";
-        } else if (/Restoring into/i.test(line)) {
+        } else if (/Restoring into|Applying SQL dump/i.test(line)) {
           percent = 70;
           label = "Restoring database objects…";
         }
@@ -1494,6 +1500,155 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     } catch (error) {
       return sendError(reply, 500, error instanceof Error ? error.message : "Import failed");
     } finally {
+      try {
+        fs.rmSync(tempFile, { force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  app.post("/api/projects/:id/import-dump", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const data = await request.file();
+    if (!data) return sendError(reply, 400, "A PostgreSQL dump file is required");
+    const fields = data.fields as Record<string, any>;
+    const fieldValue = (name: string): string | undefined => {
+      const field = fields?.[name];
+      if (!field) return undefined;
+      if (Array.isArray(field)) return field[0]?.value;
+      return field.value;
+    };
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const rawName = fieldValue("archiveName");
+    const baseName =
+      (rawName || `imported-${timestamp}`)
+        .replace(/\.(tar|tgz|tar\.gz|sql|dump|backup)$/i, "")
+        .trim() || `imported-${timestamp}`;
+    if (baseName.includes("/") || baseName.includes("..")) {
+      data.file.resume();
+      return sendError(reply, 400, "archiveName cannot contain slashes or '..'");
+    }
+
+    ensureDir(config.stagingRoot);
+    const tempFile = path.join(
+      config.stagingRoot,
+      `dump-upload-${Date.now()}-${(data.filename || "dump").replace(/[^a-zA-Z0-9_.-]/g, "_")}`,
+    );
+    const staging = path.join(config.stagingRoot, `import-dump-${Date.now()}`);
+    try {
+      await pipeline(data.file, fs.createWriteStream(tempFile));
+      const sizeBytes = fileSize(tempFile);
+      if (!sizeBytes) throw new Error("Uploaded dump file is empty");
+
+      const originalName = (data.filename || "").toLowerCase();
+      let ext = "dump";
+      let format: "plain" | "custom" | "tar" = "custom";
+      if (originalName.endsWith(".sql")) {
+        ext = "sql";
+        format = "plain";
+      } else if (originalName.endsWith(".tar")) {
+        ext = "tar";
+        format = "tar";
+      } else {
+        const fd = fs.openSync(tempFile, "r");
+        const header = Buffer.alloc(5);
+        const read = fs.readSync(fd, header, 0, 5, 0);
+        fs.closeSync(fd);
+        if (read === 5 && header.toString("utf8") === "PGDMP") {
+          ext = "dump";
+          format = "custom";
+        } else if (originalName.endsWith(".dump") || originalName.endsWith(".backup")) {
+          ext = "dump";
+          format = "custom";
+        } else {
+          ext = "sql";
+          format = "plain";
+        }
+      }
+
+      const database = project.pg_default_db || "database";
+      const safeDb = database.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const memberPath = `databases/${safeDb}.${ext}`;
+      ensureDir(path.join(staging, "databases"));
+      fs.copyFileSync(tempFile, path.join(staging, memberPath));
+      const sha256 = await hashFile(path.join(staging, memberPath));
+
+      fs.writeFileSync(
+        path.join(staging, "manifest.json"),
+        JSON.stringify(
+          {
+            format: "delta-postgres-v1",
+            appVersion: config.appVersion,
+            source: "raw-dump-import",
+            project: { id: project.id, name: project.name, slug: project.slug },
+            database,
+            sourceFormat: format,
+            databases: [
+              {
+                name: database,
+                file: memberPath,
+                sizeBytes,
+                sha256,
+              },
+            ],
+            createdAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+      );
+
+      const existing = new Set((await listArchives(project)).map((archive) => archive.name));
+      let archiveName = baseName;
+      let suffix = 1;
+      while (existing.has(archiveName)) {
+        archiveName = `${baseName}-${suffix++}`;
+      }
+
+      const logLines: string[] = [];
+      const stats = await createArchive(project, staging, archiveName, (line) =>
+        logLines.push(line),
+      );
+      await pool.query(
+        `INSERT INTO archives(project_id, job_id, name, created_at, size_bytes,
+           original_size, deduplicated_size, file_count)
+         VALUES($1, NULL, $2, now(), $3, $4, $5, $6)`,
+        [
+          project.id,
+          archiveName,
+          stats.compressedSize,
+          stats.originalSize,
+          stats.deduplicatedSize,
+          stats.fileCount,
+        ],
+      );
+      await audit(getActor(request), "import.dump", project.slug, {
+        archiveName,
+        database,
+        format,
+        sizeBytes,
+      });
+      return {
+        ok: true,
+        archive: {
+          name: archiveName,
+          database,
+          memberPath,
+          format,
+          sizeBytes,
+        },
+        output: logLines.join("\n"),
+      };
+    } catch (error) {
+      return sendError(
+        reply,
+        500,
+        error instanceof Error ? error.message : "Dump import failed",
+      );
+    } finally {
+      rmrf(staging);
       try {
         fs.rmSync(tempFile, { force: true });
       } catch {
