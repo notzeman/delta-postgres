@@ -189,8 +189,10 @@ For each run, the dashboard executes inside the target PostgreSQL container:
 
 ```bash
 pg_dumpall -U <user> --globals-only
-pg_dump -U <user> -Fc -Z 0 -d <database>   # one per selected database
+pg_dump -U <user> -Fc -Z 0 -d <database>   # primary database by default
 ```
+
+By default, only the project’s primary database is dumped (`POSTGRES_DB` / `pg_default_db`), producing a single dump file per archive. Add more databases in **Project → Settings → Databases** if you need them; the restore flow still auto-selects the primary dump.
 
 It writes a manifest, then creates one Borg archive:
 
@@ -224,15 +226,15 @@ The dashboard's metadata lives in the `dashboard-db` Postgres container and is e
 
 Open a project → **Restore**:
 
-- Choose an archive. The **Database dump** list is read directly from that archive’s `databases/*.dump` files.
-- **Database dump** is the dump to extract; **Target database** is where it is restored in the current PostgreSQL container.
-- If the archive contains exactly one dump, the dashboard shows it read-only and skips the picker. Multiple dumps get a picker.
-- The default target is a new database: `restore_<db>_<date>`.
+- Choose an archive; the newest archive is selected automatically.
+- The dump file is selected automatically from the archive by matching the project’s primary database (`pg_default_db`).
+- No target-database field: the target container is resolved automatically.
+- Without **Overwrite**, a new scratch database is created automatically, e.g. `restore_devhrmsdb_20261109123456`.
+- With **Overwrite**, the primary database is dropped and recreated inside the container, then restored in place. You must type `CONFIRM` to enable it.
+- Live phase progress and logs stream into the side panel.
 - The project container is re-resolved automatically before restore.
-- Enabling **Overwrite** terminates connections, drops the target, and requires typing the target name.
-- The dump is extracted from Borg and piped into `pg_restore` inside the container.
 
-Restores are intentionally non-destructive by default.
+Restores are non-destructive by default. Overwrite is the explicit destructive path.
 
 ---
 
@@ -248,7 +250,7 @@ Restores are intentionally non-destructive by default.
 
 Open a project and use the **Import / export** tab to download its full repository or a specific archive, and to upload a new archive or replace the repository — all scoped to that project. Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
 
-An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The restore **Database dump** picker lists those dumps. If a project has three databases, the archive has three dumps.
+An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The default backup includes only the primary database, so most archives contain exactly one dump. If multiple databases were selected in project settings, the archive contains multiple dumps; restore still auto-selects the primary one.
 
 Imported archives are subject to the project's retention policy. Importing an archive with the same timestamp/day as an existing one can result in one being removed by the next `borg prune`; the catalog now reconciles automatically and removes rows for archives that no longer exist.
 
@@ -418,7 +420,7 @@ Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is pres
 A previous run may still hold a lock. Check `docker compose logs dashboard`, then run `borg break-lock <repo>` in the container.
 
 **Restore fails with a missing member path**
-The restore form lists dump files from the selected archive itself. Pick a database dump from that list; the exact `databases/<name>.dump` member is sent to the backend.
+The restore form auto-selects the primary database dump from the archive. If the archive has no matching dump, refresh the archive list or verify the project’s primary database setting.
 
 **Dashboard can't reach Docker**
 Verify the runtime process ownership and group membership:
