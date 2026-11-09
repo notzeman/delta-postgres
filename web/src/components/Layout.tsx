@@ -27,9 +27,40 @@ const NAV = [
   { to: "/projects", label: "Projects", icon: Database },
   { to: "/servers", label: "Servers", icon: Server },
   { to: "/activity", label: "Activity", icon: Activity },
+];
+
+const NAV_BOTTOM = [
   { to: "/transfer", label: "Import / Export", icon: ArrowDownUp },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
+
+function NavItem({
+  item,
+  onNavigate,
+}: {
+  item: { to: string; label: string; icon: React.ElementType };
+  onNavigate: () => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === "/"}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition",
+          isActive
+            ? "bg-accent-500/10 text-accent-300"
+            : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
+        )
+      }
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="truncate">{item.label}</span>
+    </NavLink>
+  );
+}
 
 function useTitle(): string {
   const location = useLocation();
@@ -134,31 +165,12 @@ export default function Layout({
         </div>
 
         <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3">
-          {NAV.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/"}
-                onClick={() => setOpen(false)}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition",
-                    isActive
-                      ? "bg-accent-500/10 text-accent-300"
-                      : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
-                  )
-                }
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </NavLink>
-            );
-          })}
+          {NAV.map((item) => (
+            <NavItem key={item.to} item={item} onNavigate={() => setOpen(false)} />
+          ))}
         </nav>
 
-        <div className="space-y-3 border-t border-white/5 px-4 py-4">
+        <div className="space-y-3 border-t border-white/5 px-3 py-4">
           <div className="rounded-xl border border-white/5 bg-ink-900/60 p-3">
             <div className="mb-2 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
               <ShieldCheck className="h-3 w-3" />
@@ -176,6 +188,11 @@ export default function Layout({
               </p>
             ) : null}
           </div>
+          <nav className="space-y-1" aria-label="Secondary">
+            {NAV_BOTTOM.map((item) => (
+              <NavItem key={item.to} item={item} onNavigate={() => setOpen(false)} />
+            ))}
+          </nav>
           <div className="flex items-center justify-between">
             <div className="min-w-0">
               <p className="truncate text-xs font-medium text-slate-300">{user.username}</p>
