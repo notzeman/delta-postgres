@@ -130,16 +130,18 @@ export interface DockerServer {
   id: number;
   name: string;
   slug: string;
-  type: "local" | "tcp";
-  protocol: "socket" | "http" | "https";
+  type: "local" | "tcp" | "ssh";
+  protocol: "socket" | "http" | "https" | "ssh";
   host: string | null;
   port: number | null;
   socket_path: string | null;
+  ssh_username: string | null;
   tls_verify: boolean;
   enabled: boolean;
   hasCa?: boolean;
   hasCert?: boolean;
   hasKey?: boolean;
+  hasSshPassword?: boolean;
   created_at: string;
   updated_at: string;
   status?: {

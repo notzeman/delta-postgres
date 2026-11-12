@@ -36,11 +36,13 @@ import ConfirmModal from "../components/ConfirmModal";
 
 interface ServerForm {
   name: string;
-  type: "local" | "tcp";
+  type: "local" | "tcp" | "ssh";
   protocol: "http" | "https";
   host: string;
   port: string;
   socketPath: string;
+  sshUsername: string;
+  sshPassword: string;
   tlsCa: string;
   tlsCert: string;
   tlsKey: string;
@@ -50,11 +52,13 @@ interface ServerForm {
 
 const EMPTY_FORM: ServerForm = {
   name: "",
-  type: "tcp",
+  type: "ssh",
   protocol: "http",
   host: "",
-  port: "2375",
+  port: "22",
   socketPath: "/var/run/docker.sock",
+  sshUsername: "",
+  sshPassword: "",
   tlsCa: "",
   tlsCert: "",
   tlsKey: "",
@@ -65,6 +69,9 @@ const EMPTY_FORM: ServerForm = {
 function address(server: DockerServer): string {
   if (server.type === "local" || server.protocol === "socket") {
     return server.socket_path || "/var/run/docker.sock";
+  }
+  if (server.type === "ssh" || server.protocol === "ssh") {
+    return `ssh://${server.ssh_username || "root"}@${server.host}:${server.port}`;
   }
   return `${server.protocol}://${server.host}:${server.port}`;
 }
@@ -86,8 +93,14 @@ function ServerFormModal({
           type: editing.type,
           protocol: editing.protocol === "https" ? "https" : "http",
           host: editing.host || "",
-          port: editing.port ? String(editing.port) : "2375",
+          port: editing.port
+            ? String(editing.port)
+            : editing.type === "ssh"
+              ? "22"
+              : "2375",
           socketPath: editing.socket_path || "/var/run/docker.sock",
+          sshUsername: editing.ssh_username || "",
+          sshPassword: "",
           tlsCa: "",
           tlsCert: "",
           tlsKey: "",
@@ -100,29 +113,40 @@ function ServerFormModal({
   const [notice, setNotice] = useState("");
   const [testResult, setTestResult] = useState<any>(null);
 
-  const payload = () => {
+  const payload = (opts: { includeId?: boolean } = {}) => {
     const base: any = {
       name: form.name,
       type: form.type,
       enabled: form.enabled,
     };
-    if (form.type === "tcp") {
+    if (opts.includeId && editing) base.id = editing.id;
+    if (form.type === "ssh") {
+      base.host = form.host;
+      base.port = form.port ? Number(form.port) : 22;
+      base.sshUsername = form.sshUsername;
+      // Blank password means "keep existing" when editing.
+      if (form.sshPassword) base.sshPassword = form.sshPassword;
+    } else if (form.type === "tcp") {
       base.protocol = form.protocol;
       base.host = form.host;
       base.port = form.port ? Number(form.port) : null;
       base.tlsVerify = form.tlsVerify;
+      // Blank TLS fields mean "keep existing" when editing.
+      if (form.tlsCa) base.tlsCa = form.tlsCa;
+      if (form.tlsCert) base.tlsCert = form.tlsCert;
+      if (form.tlsKey) base.tlsKey = form.tlsKey;
     } else if (!editing) {
       base.socketPath = form.socketPath;
     }
-    // Blank TLS fields mean "keep existing" when editing.
-    if (form.tlsCa) base.tlsCa = form.tlsCa;
-    if (form.tlsCert) base.tlsCert = form.tlsCert;
-    if (form.tlsKey) base.tlsKey = form.tlsKey;
     return base;
   };
 
   const test = useMutation({
-    mutationFn: () => api("/servers/test", { method: "POST", body: JSON.stringify(payload()) }),
+    mutationFn: () =>
+      api("/servers/test", {
+        method: "POST",
+        body: JSON.stringify(payload({ includeId: true })),
+      }),
     onSuccess: (data: any) => {
       setTestResult(data);
       setError("");
@@ -156,7 +180,7 @@ function ServerFormModal({
       open={open}
       onClose={onClose}
       title={editing ? `Edit ${editing.name}` : "Add Docker server"}
-      subtitle="Connect to another Docker Engine API. TLS material is encrypted at rest."
+      subtitle="Connect over SSH with a username and password, or use a TCP/TLS Docker endpoint. Credentials are encrypted at rest."
       wide
     >
       <form
@@ -182,11 +206,21 @@ function ServerFormModal({
               onChange={(next) =>
                 setForm((f) => ({
                   ...f,
-                  type: next as "local" | "tcp",
-                  protocol: next === "local" ? "http" : f.protocol,
+                  type: next as "local" | "tcp" | "ssh",
+                  port:
+                    next === "ssh"
+                      ? "22"
+                      : next === "tcp" && (!f.port || f.port === "22")
+                        ? "2375"
+                        : f.port,
                 }))
               }
               options={[
+                {
+                  value: "ssh",
+                  label: "SSH",
+                  description: "Username & password over SSH",
+                },
                 {
                   value: "tcp",
                   label: "TCP / TLS",
@@ -204,7 +238,65 @@ function ServerFormModal({
           </Field>
         </div>
 
-        {form.type === "tcp" ? (
+        {form.type === "ssh" ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Server IP or hostname">
+                <Input
+                  value={form.host}
+                  onChange={(event) => setForm((f) => ({ ...f, host: event.target.value }))}
+                  placeholder="200.97.165.234"
+                  required
+                />
+              </Field>
+              <Field label="SSH port">
+                <Input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={form.port}
+                  onChange={(event) => setForm((f) => ({ ...f, port: event.target.value }))}
+                />
+              </Field>
+              <Field label="SSH username">
+                <Input
+                  value={form.sshUsername}
+                  onChange={(event) =>
+                    setForm((f) => ({ ...f, sshUsername: event.target.value }))
+                  }
+                  placeholder="crono"
+                  autoComplete="username"
+                  required
+                />
+              </Field>
+            </div>
+            <Field
+              label="SSH password"
+              hint={
+                editing?.hasSshPassword
+                  ? "Stored — leave blank to keep"
+                  : "Encrypted at rest with SECRETS_KEY"
+              }
+            >
+              <Input
+                type="password"
+                value={form.sshPassword}
+                onChange={(event) =>
+                  setForm((f) => ({ ...f, sshPassword: event.target.value }))
+                }
+                placeholder={editing?.hasSshPassword ? "••••••••" : ""}
+                autoComplete="new-password"
+                required={!editing}
+              />
+            </Field>
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
+              Connects over SSH and runs{" "}
+              <span className="font-mono">docker system dial-stdio</span>. The SSH user must be
+              allowed to use Docker, typically by membership in the{" "}
+              <span className="font-mono">docker</span> group.
+            </div>
+          </div>
+        ) : form.type === "tcp" ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Protocol">
@@ -408,8 +500,8 @@ export default function Servers() {
             Docker servers
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-400">
-            Scope projects to different Docker hosts. Connect remote engines over TCP or TLS; TLS
-            credentials are encrypted at rest.
+            Scope projects to different Docker hosts. SSH servers only need an IP/host, SSH
+            username, and password; TCP/TLS endpoints are also supported.
           </p>
         </div>
         <div className="flex gap-2">
@@ -463,8 +555,20 @@ export default function Servers() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-sm font-semibold text-slate-100">{server.name}</h3>
-                        <Badge tone={server.type === "local" ? "violet" : "blue"}>
-                          {server.type === "local" ? "local" : "remote"}
+                        <Badge
+                          tone={
+                            server.type === "local"
+                              ? "violet"
+                              : server.type === "ssh" || server.protocol === "ssh"
+                                ? "amber"
+                                : "blue"
+                          }
+                        >
+                          {server.type === "local"
+                            ? "local"
+                            : server.type === "ssh" || server.protocol === "ssh"
+                              ? "ssh"
+                              : "remote"}
                         </Badge>
                         {!server.enabled ? <Badge tone="neutral">disabled</Badge> : null}
                       </div>
@@ -493,13 +597,19 @@ export default function Servers() {
                     <p className="mt-0.5 text-slate-200">{server.projectCount ?? 0}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500">TLS</p>
+                    <p className="text-xs font-medium text-slate-500">
+                      {server.type === "ssh" || server.protocol === "ssh" ? "Auth" : "TLS"}
+                    </p>
                     <p className="mt-0.5 text-slate-200">
-                      {server.protocol === "https"
-                        ? server.hasCa || server.hasCert
-                          ? "configured"
-                          : "no certs"
-                        : "—"}
+                      {server.type === "ssh" || server.protocol === "ssh"
+                        ? server.hasSshPassword
+                          ? "password"
+                          : "—"
+                        : server.protocol === "https"
+                          ? server.hasCa || server.hasCert
+                            ? "configured"
+                            : "no certs"
+                          : "—"}
                     </p>
                   </div>
                 </div>

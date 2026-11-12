@@ -247,11 +247,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   app.post("/api/servers", async (request, reply) => {
     const schema = z.object({
       name: z.string().min(1).max(80),
-      type: z.enum(["local", "tcp"]),
-      protocol: z.enum(["socket", "http", "https"]).optional(),
+      type: z.enum(["local", "tcp", "ssh"]),
+      protocol: z.enum(["socket", "http", "https", "ssh"]).optional(),
       host: z.string().nullable().optional(),
       port: z.number().int().min(1).max(65535).nullable().optional(),
       socketPath: z.string().nullable().optional(),
+      sshUsername: z.string().nullable().optional(),
+      sshPassword: z.string().nullable().optional(),
       tlsCa: z.string().nullable().optional(),
       tlsCert: z.string().nullable().optional(),
       tlsKey: z.string().nullable().optional(),
@@ -274,18 +276,31 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (body.type === "tcp" && !body.host) {
       return sendError(reply, 400, "Host is required for a TCP Docker server");
     }
+    if (body.type === "ssh") {
+      if (!body.host) return sendError(reply, 400, "Server IP or hostname is required");
+      if (!body.sshUsername) return sendError(reply, 400, "SSH username is required");
+      if (!body.sshPassword) return sendError(reply, 400, "SSH password is required");
+    }
 
-    const protocol = body.type === "local" ? "socket" : body.protocol || "http";
-    const port = body.type === "tcp" ? body.port ?? (protocol === "https" ? 2376 : 2375) : null;
+    const protocol =
+      body.type === "local" ? "socket" : body.type === "ssh" ? "ssh" : body.protocol || "http";
+    const port =
+      body.type === "local"
+        ? null
+        : body.type === "ssh"
+          ? body.port ?? 22
+          : body.port ?? (protocol === "https" ? 2376 : 2375);
     const temp: ServerRow = {
       id: 0,
       name: body.name,
       slug: slugify(body.name),
       type: body.type,
       protocol,
-      host: body.type === "tcp" ? body.host || null : null,
+      host: body.type === "tcp" || body.type === "ssh" ? body.host || null : null,
       port,
       socket_path: body.type === "local" ? body.socketPath || config.dockerSocket : null,
+      ssh_username: body.type === "ssh" ? body.sshUsername || null : null,
+      ssh_password: body.type === "ssh" ? body.sshPassword || null : null,
       tls_ca: body.tlsCa || null,
       tls_cert: body.tlsCert || null,
       tls_key: body.tlsKey || null,
@@ -311,8 +326,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
     const { rows } = await pool.query<ServerRow>(
       `INSERT INTO servers(name, slug, type, protocol, host, port, socket_path,
-         tls_ca, tls_cert, tls_key, tls_verify, enabled)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         ssh_username, ssh_password, tls_ca, tls_cert, tls_key, tls_verify, enabled)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         temp.name,
@@ -322,6 +337,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         temp.host,
         temp.port,
         temp.socket_path,
+        temp.ssh_username,
+        encryptSecret(temp.ssh_password),
         encryptSecret(temp.tls_ca),
         encryptSecret(temp.tls_cert),
         encryptSecret(temp.tls_key),
@@ -346,8 +363,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       name: z.string().min(1).max(80).optional(),
       host: z.string().nullable().optional(),
       port: z.number().int().min(1).max(65535).nullable().optional(),
-      protocol: z.enum(["socket", "http", "https"]).optional(),
+      protocol: z.enum(["socket", "http", "https", "ssh"]).optional(),
       socketPath: z.string().nullable().optional(),
+      sshUsername: z.string().nullable().optional(),
+      sshPassword: z.string().nullable().optional(),
       tlsCa: z.string().nullable().optional(),
       tlsCert: z.string().nullable().optional(),
       tlsKey: z.string().nullable().optional(),
@@ -358,7 +377,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
     const body: any = parsed.data;
     if (server.type === "local") {
-      const forbidden = ["host", "port", "protocol", "socketPath", "tlsCa", "tlsCert", "tlsKey", "tlsVerify"];
+      const forbidden = ["host", "port", "protocol", "socketPath", "sshUsername", "sshPassword", "tlsCa", "tlsCert", "tlsKey", "tlsVerify"];
       if (forbidden.some((key) => body[key] !== undefined)) {
         return sendError(reply, 400, "The local server connection cannot be changed");
       }
@@ -375,6 +394,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (body.port !== undefined) add("port", body.port);
     if (body.protocol !== undefined) add("protocol", body.protocol);
     if (body.socketPath !== undefined) add("socket_path", body.socketPath);
+    if (body.sshUsername !== undefined) add("ssh_username", body.sshUsername);
+    if (body.sshPassword) add("ssh_password", encryptSecret(body.sshPassword));
     if (body.tlsCa !== undefined) add("tls_ca", body.tlsCa ? encryptSecret(body.tlsCa) : null);
     if (body.tlsCert !== undefined) add("tls_cert", body.tlsCert ? encryptSecret(body.tlsCert) : null);
     if (body.tlsKey !== undefined) add("tls_key", body.tlsKey ? encryptSecret(body.tlsKey) : null);
@@ -389,7 +410,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
        WHERE id = $${params.length} RETURNING *`,
       params,
     );
-    await audit(getActor(request), "server.update", server.slug, body);
+    const auditMeta: Record<string, any> = {};
+    for (const [key, value] of Object.entries(body)) {
+      if (["sshPassword", "tlsCa", "tlsCert", "tlsKey"].includes(key)) {
+        auditMeta[key] = value ? "[redacted]" : null;
+      } else {
+        auditMeta[key] = value;
+      }
+    }
+    await audit(getActor(request), "server.update", server.slug, auditMeta);
     return {
       server: { ...toPublicServer(rows[0]), status: await serverStatus(rows[0]) },
     };
@@ -422,11 +451,14 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
   app.post("/api/servers/test", async (request, reply) => {
     const schema = z.object({
-      type: z.enum(["local", "tcp"]).default("tcp"),
-      protocol: z.enum(["socket", "http", "https"]).optional(),
+      id: z.number().int().positive().optional(),
+      type: z.enum(["local", "tcp", "ssh"]).default("tcp"),
+      protocol: z.enum(["socket", "http", "https", "ssh"]).optional(),
       host: z.string().nullable().optional(),
       port: z.number().int().min(1).max(65535).nullable().optional(),
       socketPath: z.string().nullable().optional(),
+      sshUsername: z.string().nullable().optional(),
+      sshPassword: z.string().nullable().optional(),
       tlsCa: z.string().nullable().optional(),
       tlsCert: z.string().nullable().optional(),
       tlsKey: z.string().nullable().optional(),
@@ -435,16 +467,36 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
     const body = parsed.data;
-    const protocol = body.type === "local" ? "socket" : body.protocol || "http";
+    let sshPassword = body.sshPassword || null;
+    if (body.type === "ssh" && !sshPassword && body.id) {
+      const stored = await getServer(body.id);
+      if (stored?.type === "ssh") {
+        sshPassword = stored.ssh_password;
+        if (!body.sshUsername) body.sshUsername = stored.ssh_username;
+        if (!body.host) body.host = stored.host;
+      }
+    }
+    if (body.type === "ssh" && (!body.host || !body.sshUsername || !sshPassword)) {
+      return sendError(reply, 400, "SSH requires host, username, and password");
+    }
+    const protocol =
+      body.type === "local" ? "socket" : body.type === "ssh" ? "ssh" : body.protocol || "http";
     const temp: ServerRow = {
       id: 0,
       name: "test",
       slug: "test",
       type: body.type,
       protocol,
-      host: body.host || null,
-      port: body.type === "tcp" ? body.port ?? (protocol === "https" ? 2376 : 2375) : null,
+      host: body.type === "tcp" || body.type === "ssh" ? body.host || null : null,
+      port:
+        body.type === "local"
+          ? null
+          : body.type === "ssh"
+            ? body.port ?? 22
+            : body.port ?? (protocol === "https" ? 2376 : 2375),
       socket_path: body.type === "local" ? body.socketPath || config.dockerSocket : null,
+      ssh_username: body.type === "ssh" ? body.sshUsername || null : null,
+      ssh_password: body.type === "ssh" ? sshPassword : null,
       tls_ca: body.tlsCa || null,
       tls_cert: body.tlsCert || null,
       tls_key: body.tlsKey || null,

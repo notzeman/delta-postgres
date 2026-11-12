@@ -81,11 +81,13 @@ export interface ServerRow {
   id: number;
   name: string;
   slug: string;
-  type: "local" | "tcp";
-  protocol: "socket" | "http" | "https";
+  type: "local" | "tcp" | "ssh";
+  protocol: "socket" | "http" | "https" | "ssh";
   host: string | null;
   port: number | null;
   socket_path: string | null;
+  ssh_username: string | null;
+  ssh_password: string | null;
   tls_ca: string | null;
   tls_cert: string | null;
   tls_key: string | null;
@@ -106,6 +108,8 @@ export async function ensureSchema(): Promise<void> {
       host TEXT,
       port INTEGER,
       socket_path TEXT,
+      ssh_username TEXT,
+      ssh_password TEXT,
       tls_ca TEXT,
       tls_cert TEXT,
       tls_key TEXT,
@@ -222,6 +226,12 @@ export async function ensureSchema(): Promise<void> {
   );
   await pool.query(
     `ALTER TABLE projects ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT false`,
+  );
+  await pool.query(
+    `ALTER TABLE servers ADD COLUMN IF NOT EXISTS ssh_username TEXT`,
+  );
+  await pool.query(
+    `ALTER TABLE servers ADD COLUMN IF NOT EXISTS ssh_password TEXT`,
   );
   await pool.query(`UPDATE projects SET server_id = $1 WHERE server_id IS NULL`, [
     localId,

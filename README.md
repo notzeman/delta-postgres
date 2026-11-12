@@ -25,7 +25,7 @@ DeltaPostgres is a self-hosted dashboard that finds the PostgreSQL containers on
 - **Zero-config discovery.** Every Docker Compose project on each connected host is scanned. Projects that contain PostgreSQL are added automatically with their databases and `POSTGRES_USER`.
 - **One encrypted repository per project.** Each project gets its own `repokey-blake2` Borg repo, its own schedule and its own retention.
 - **Safe restores by default.** Restores go into a new scratch database. Overwriting a live database requires typing its name.
-- **Many hosts, one console.** Connect remote Docker Engine APIs over TCP or mutual TLS. Discovery, backups and restores are scoped per server.
+- **Many hosts, one console.** Connect remote Docker hosts over SSH with a username and password, or over TCP/mutual TLS. Discovery, backups and restores are scoped per server.
 
 > [!NOTE]
 > This is logical backup with deduplicated storage, not WAL-level point-in-time recovery. If you need PITR, pair it with a tool such as pgBackRest.
@@ -131,8 +131,9 @@ If a container is recreated, its ID changes. Backups and restores re-resolve the
 
 **Local Docker** is added automatically from `DOCKER_SOCKET`. Add remote hosts on the **Servers** page:
 
-- `http` on port 2375, or `https` on 2376 with an optional CA certificate, client certificate and key
-- Connections are tested before saving, and TLS material is encrypted at rest with `SECRETS_KEY`
+- **SSH** — the simplest option: an IP/hostname, SSH username, and SSH password. Port defaults to `22`. The dashboard connects over SSH and runs `docker system dial-stdio`; the SSH user must be in the `docker` group (or otherwise allowed to use Docker). Passwords are encrypted at rest with `SECRETS_KEY`.
+- **TCP / TLS** — `http` on port 2375, or `https` on 2376 with an optional CA certificate, client certificate and key.
+- Connections are tested before saving, and credentials are encrypted at rest with `SECRETS_KEY`
 - **Scan now** discovers and auto-adds a server's PostgreSQL projects immediately
 - Removing a server deletes its project records after a second confirmation. Borg repositories stay on disk.
 
@@ -169,7 +170,7 @@ Schedules, timezone, concurrency, retention, the notification webhook and auto-a
 | `SESSION_SECRET` | Yes | Signs login cookies. Rotating it signs everyone out. | `openssl rand -hex 32` |
 | `DASHBOARD_DB_PASSWORD` | Yes | Password for the dashboard's own Postgres | `openssl rand -hex 24` |
 | `BORG_PASSPHRASE` | Yes | Encrypts every Borg repository. **Unrecoverable if lost.** | `openssl rand -hex 32` |
-| `SECRETS_KEY` | Yes | Encrypts stored remote Docker TLS credentials | `openssl rand -hex 32` |
+| `SECRETS_KEY` | Yes | Encrypts stored remote Docker SSH passwords and TLS credentials | `openssl rand -hex 32` |
 | `COOKIE_SECURE` | No | Set to `true` when serving over HTTPS | `false` / `true` |
 | `DASHBOARD_PORT` | No | Host port published by Compose | `8095` |
 
@@ -196,7 +197,7 @@ The entrypoint starts as root only long enough to detect the owner of `./data` a
 
 - `.env` is gitignored. Keep it `chmod 600`.
 - Changing `BORG_PASSPHRASE` doesn't re-encrypt existing repositories. Use `borg key export` for a portable key backup.
-- `SECRETS_KEY` must stay stable. Changing it invalidates stored TLS certificates, and you'll have to re-enter them on the **Servers** page.
+- `SECRETS_KEY` must stay stable. Changing it invalidates stored SSH passwords and TLS certificates, and you'll have to re-enter them on the **Servers** page.
 - `DASHBOARD_DB_PASSWORD` must match the actual Postgres role. If you change it after the volume exists, update the role inside `dashboard-db` too.
 
 </details>
@@ -288,7 +289,7 @@ A previous run may still hold the lock. Check `docker compose logs dashboard`, t
 <details>
 <summary>A remote Docker server shows as offline</summary>
 
-Check that the Docker Engine API is reachable from the dashboard container, that the host and port are right (2375 for `http`, 2376 for `https`), and that the TLS certificates match. **Servers → Test** shows the exact error.
+Check that the Docker Engine API is reachable from the dashboard container, that the host and port are right (22 for SSH, 2375 for `http`, 2376 for `https`), and that credentials or TLS certificates match. **Servers → Test** shows the exact error. For SSH, confirm the user is in the `docker` group: `ssh user@host 'docker version'`.
 
 </details>
 

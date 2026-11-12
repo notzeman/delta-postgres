@@ -13,25 +13,36 @@ export interface ServerStatus {
 }
 
 export interface ServerPublic
-  extends Omit<ServerRow, "tls_ca" | "tls_cert" | "tls_key"> {
+  extends Omit<ServerRow, "tls_ca" | "tls_cert" | "tls_key" | "ssh_password"> {
   hasCa: boolean;
   hasCert: boolean;
   hasKey: boolean;
+  hasSshPassword: boolean;
 }
 
 export function toPublicServer(server: ServerRow): ServerPublic {
-  const { tls_ca, tls_cert, tls_key, ...rest } = server;
+  const { tls_ca, tls_cert, tls_key, ssh_password, ...rest } = server;
   return {
     ...rest,
     hasCa: Boolean(tls_ca),
     hasCert: Boolean(tls_cert),
     hasKey: Boolean(tls_key),
+    hasSshPassword: Boolean(ssh_password),
   };
 }
 
 export function dockerOptionsFor(server?: ServerRow | null): any {
   if (!server || server.type === "local" || server.protocol === "socket") {
     return { socketPath: server?.socket_path || config.dockerSocket };
+  }
+  if (server.type === "ssh" || server.protocol === "ssh") {
+    return {
+      protocol: "ssh",
+      host: server.host || "localhost",
+      port: server.port || 22,
+      username: server.ssh_username || "root",
+      password: decryptSecret(server.ssh_password) || undefined,
+    };
   }
   const options: any = {
     protocol: server.protocol,
@@ -103,6 +114,9 @@ export async function serverStatus(
 export function serverAddress(server: ServerRow): string {
   if (server.type === "local" || server.protocol === "socket") {
     return server.socket_path || config.dockerSocket;
+  }
+  if (server.type === "ssh" || server.protocol === "ssh") {
+    return `ssh://${server.ssh_username || "root"}@${server.host}:${server.port || 22}`;
   }
   return `${server.protocol}://${server.host}:${server.port}`;
 }
