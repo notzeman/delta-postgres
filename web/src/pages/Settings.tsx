@@ -220,7 +220,7 @@ export default function Settings() {
               </Field>
               <Field
                 label="Concurrent backup jobs"
-                hint="1–10. Applies on the next worker tick; running jobs are not interrupted."
+                hint="1–10. Total jobs; each Docker server runs at most one backup at a time. Applies on the next worker tick; running jobs are not interrupted."
               >
                 <Picker
                   value={form.concurrency}

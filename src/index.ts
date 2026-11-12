@@ -156,12 +156,23 @@ async function main(): Promise<void> {
   startScheduler();
 
   let discoveryTimer: NodeJS.Timeout | null = null;
+  let discoveryRunning = false;
   const autoDiscover = () => {
+    // A full scan of a large remote host can take longer than the interval.
+    // Never stack discovery runs on top of each other.
+    if (discoveryRunning) {
+      app.log.warn("Auto-discovery still running; skipping this interval");
+      return;
+    }
+    discoveryRunning = true;
     runAutoDiscovery()
       .then((added) => {
         if (added > 0) app.log.info({ added }, "Auto-added newly discovered projects");
       })
-      .catch((error) => app.log.warn(error, "Auto-discovery failed"));
+      .catch((error) => app.log.warn(error, "Auto-discovery failed"))
+      .finally(() => {
+        discoveryRunning = false;
+      });
   };
   const discoveryStartup = setTimeout(autoDiscover, 2500);
   discoveryTimer = setInterval(autoDiscover, 5 * 60_000);

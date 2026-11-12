@@ -139,6 +139,18 @@ If a container is recreated, its ID changes. Backups and restores re-resolve the
 - **Scan now** discovers and auto-adds a server's PostgreSQL projects immediately
 - Removing a server deletes its project records after a second confirmation. Borg repositories stay on disk.
 
+### Backup safety
+
+Backups are designed to be read-only against your projects:
+
+- The only commands run inside a source container are `pg_dumpall --globals-only` and `pg_dump -Fc`. No `INSERT`, `UPDATE`, `DELETE`, `DROP`, or other writes happen during a backup.
+- Newly discovered or added projects are scheduled for the **next cron occurrence**; adding a project never starts an immediate backup.
+- Only projects that are **enabled** and not **ignored** are considered. Disabled projects are never backed up.
+- **One backup per Docker server runs at a time.** The concurrency setting caps total jobs, but a single source host never gets parallel dumps.
+- `pg_dump` uses `--lock-wait-timeout=30s`, so it aborts rather than waiting behind a DDL lock and blocking your application.
+- Restores and dump imports are **manual only**. Overwriting a database requires typing `CONFIRM`, and nothing is restored on a schedule.
+- Retention and pruning operate only inside the project's Borg repository. Source databases are never touched.
+
 ### Restore
 
 Open a project and choose **Restore**:

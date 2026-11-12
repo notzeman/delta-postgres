@@ -33,6 +33,7 @@ import {
 } from "./utils";
 
 const activeJobs = new Set<number>();
+const activeServers = new Set<number>();
 const canceledJobs = new Set<number>();
 let workerTimer: NodeJS.Timeout | null = null;
 let ticking = false;
@@ -250,7 +251,18 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
       const started = Date.now();
       const dump = await execToFile(
         container.id,
-        ["pg_dump", "-U", pgUser, "-Fc", "-Z", "0", "-d", db],
+        [
+          "pg_dump",
+          "-U",
+          pgUser,
+          "-Fc",
+          "-Z",
+          "0",
+          // Never hold ACCESS SHARE locks behind a waiting DDL statement.
+          "--lock-wait-timeout=30s",
+          "-d",
+          db,
+        ],
         dumpFile,
         (line) => log(`pg_dump ${db}: ${line}`),
         {},
@@ -429,22 +441,30 @@ async function tick(): Promise<void> {
       Number(settings.concurrency || config.concurrency),
     );
     while (activeJobs.size < concurrency) {
-      const { rows } = await pool.query<{ id: number }>(
+      // Serialize backups per Docker server. Even if concurrency is raised,
+      // a single source host never gets more than one concurrent dump.
+      const busyServers = Array.from(activeServers);
+      const { rows } = await pool.query<{ id: number; server_id: number }>(
         `UPDATE backup_jobs SET status = 'running', started_at = now()
          WHERE id = (
-           SELECT id FROM backup_jobs
-           WHERE status = 'queued'
-           ORDER BY created_at ASC
+           SELECT bj.id FROM backup_jobs bj
+           JOIN projects p ON p.id = bj.project_id
+           WHERE bj.status = 'queued'
+             AND NOT (p.server_id = ANY($1::int[]))
+           ORDER BY bj.created_at ASC
            LIMIT 1
-           FOR UPDATE SKIP LOCKED
+           FOR UPDATE OF bj SKIP LOCKED
          )
-         RETURNING id`,
+         RETURNING id,
+           (SELECT server_id FROM projects WHERE id = backup_jobs.project_id) AS server_id`,
+        [busyServers],
       );
       if (!rows[0]) break;
       const jobId = rows[0].id;
       // runJob expects queued, but we just claimed it; run with a flag.
+      activeServers.add(rows[0].server_id);
       activeJobs.add(jobId);
-      void runClaimedJob(jobId);
+      void runClaimedJob(jobId, rows[0].server_id);
     }
   } catch (error) {
     console.error("Job worker error", error);
@@ -453,7 +473,7 @@ async function tick(): Promise<void> {
   }
 }
 
-async function runClaimedJob(jobId: number): Promise<void> {
+async function runClaimedJob(jobId: number, serverId: number): Promise<void> {
   let project: Project | null = null;
   try {
     const job = await getJob(jobId);
@@ -491,6 +511,7 @@ async function runClaimedJob(jobId: number): Promise<void> {
     if (!canceled && project) await notifyWebhook(project, jobId, "failed", message);
   } finally {
     activeJobs.delete(jobId);
+    activeServers.delete(serverId);
     canceledJobs.delete(jobId);
   }
 }
