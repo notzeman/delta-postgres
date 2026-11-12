@@ -93,6 +93,8 @@ export interface ServerRow {
   tls_key: string | null;
   tls_verify: boolean;
   enabled: boolean;
+  production: boolean;
+  ssh_host_key: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -232,6 +234,14 @@ export async function ensureSchema(): Promise<void> {
   );
   await pool.query(
     `ALTER TABLE servers ADD COLUMN IF NOT EXISTS ssh_password TEXT`,
+  );
+  // Production servers are strictly backup-only: restore is refused.
+  await pool.query(
+    `ALTER TABLE servers ADD COLUMN IF NOT EXISTS production BOOLEAN NOT NULL DEFAULT false`,
+  );
+  // Pinned SSH host key ("<type> SHA256:<hash>"), trusted on first use.
+  await pool.query(
+    `ALTER TABLE servers ADD COLUMN IF NOT EXISTS ssh_host_key TEXT`,
   );
   await pool.query(`UPDATE projects SET server_id = $1 WHERE server_id IS NULL`, [
     localId,

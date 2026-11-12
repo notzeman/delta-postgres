@@ -13,6 +13,7 @@ import {
   containerDatabases,
   postgresVersion,
   execToFile,
+  PG_READ_ONLY_ENV,
 } from "./docker";
 import { resolveProjectContainer } from "./containerResolver";
 import {
@@ -35,6 +36,8 @@ import {
 const activeJobs = new Set<number>();
 const activeServers = new Set<number>();
 const canceledJobs = new Set<number>();
+// Aborts the in-flight pg_dump stream of a running job when it is canceled.
+const jobAborts = new Map<number, AbortController>();
 let workerTimer: NodeJS.Timeout | null = null;
 let ticking = false;
 
@@ -163,7 +166,24 @@ async function notifyWebhook(
 }
 
 async function executeBackup(job: BackupJob, project: Project): Promise<void> {
+  const abort = new AbortController();
+  jobAborts.set(job.id, abort);
+  if (canceledJobs.has(job.id)) abort.abort();
+  try {
+    await executeBackupSteps(job, project, abort.signal);
+  } finally {
+    jobAborts.delete(job.id);
+  }
+}
+
+async function executeBackupSteps(
+  job: BackupJob,
+  project: Project,
+  signal: AbortSignal,
+): Promise<void> {
   const log = (line: string) => appendLog(job.id, line);
+  // Read-only sessions: pg_dump/pg_dumpall can never write to the source DB.
+  const dumpOpts = { env: PG_READ_ONLY_ENV, signal };
 
   try {
     const stat: any = (fs as any).statfsSync(config.backupRoot);
@@ -229,7 +249,7 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
       ["pg_dumpall", "-U", pgUser, "--globals-only"],
       globalsFile,
       (line) => log(`pg_dumpall: ${line}`),
-      {},
+      dumpOpts,
       server,
     );
     if (globals.exitCode !== 0) {
@@ -265,7 +285,7 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
         ],
         dumpFile,
         (line) => log(`pg_dump ${db}: ${line}`),
-        {},
+        dumpOpts,
         server,
       );
       if (dump.exitCode !== 0) {
@@ -421,6 +441,8 @@ export async function runJob(jobId: number): Promise<void> {
 
 export function cancelJob(jobId: number): void {
   canceledJobs.add(jobId);
+  // Stop a dump that is already streaming instead of letting it run to the end.
+  jobAborts.get(jobId)?.abort();
   appendLog(jobId, "Cancel requested by user");
   pool
     .query(

@@ -133,9 +133,13 @@ If a container is recreated, its ID changes. Backups and restores re-resolve the
 
 **Local Docker** is added automatically from `DOCKER_SOCKET`. Add remote hosts on the **Servers** page:
 
-- **SSH** — the simplest option: an IP/hostname, SSH username, and SSH password. Port defaults to `22`. The dashboard connects over SSH and runs `docker system dial-stdio`; the SSH user must be in the `docker` group (or otherwise allowed to use Docker). Passwords are encrypted at rest with `SECRETS_KEY`.
+- **SSH** — the simplest option: an IP/hostname, SSH username, and SSH password. Port defaults to `22`. The SSH user must be in the `docker` group (or otherwise allowed to use Docker). Passwords are encrypted at rest with `SECRETS_KEY`.
+  - The dashboard keeps **one persistent SSH connection per server** (with keepalive and automatic reconnect) and opens a lightweight channel per Docker API call, instead of logging in for every request. Channels go straight to the remote `/var/run/docker.sock` via OpenSSH stream-local forwarding; if the server disallows that (`AllowStreamLocalForwarding no`), it falls back to `docker system dial-stdio` over the same connection.
+  - The server's **SSH host key is pinned** on first connect (trust on first use) and shown on the server card. If the key ever changes, the connection is refused rather than sending the password to a possible impostor. After a legitimate reinstall, verify the new fingerprint (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the host) and use **Edit → Reset host key**. Changing the host or port resets it automatically.
 - **TCP / TLS** — `http` on port 2375, or `https` on 2376 with an optional CA certificate, client certificate and key.
 - Connections are tested before saving, and credentials are encrypted at rest with `SECRETS_KEY`
+- **Production server (backup-only)** — marks a server as read-only for DeltaPostgres: restores and "restore after import" into its databases are refused (in the UI and by the API). New remote servers default to this; turn it on for any existing production host.
+- Container lists and database sizes are cached per server (30 s / 2 min) and invalidated instantly by the Docker events stream, so dashboards that poll never hammer the remote host. **Rescan** always fetches live data.
 - **Scan now** discovers and auto-adds a server's PostgreSQL projects immediately
 - Removing a server deletes its project records after a second confirmation. Borg repositories stay on disk.
 
@@ -144,6 +148,8 @@ If a container is recreated, its ID changes. Backups and restores re-resolve the
 Backups are designed to be read-only against your projects:
 
 - The only commands run inside a source container are `pg_dumpall --globals-only` and `pg_dump -Fc`. No `INSERT`, `UPDATE`, `DELETE`, `DROP`, or other writes happen during a backup.
+- Every discovery and backup session is opened with `default_transaction_read_only=on`, so PostgreSQL itself rejects any write, even one caused by a bug. Sessions are tagged `application_name=delta-postgres` so you can spot them in `pg_stat_activity`. Discovery queries also have a 30 s `statement_timeout`.
+- **Canceling a running backup stops `pg_dump` inside the container** (SIGTERM, which ends its database session cleanly). Docker keeps an exec running after the client disconnects, so this is done explicitly; the same happens if the connection drops mid-dump, so no unattended dump is left running on the source host.
 - Newly discovered or added projects are scheduled for the **next cron occurrence**; adding a project never starts an immediate backup.
 - Only projects that are **enabled** and not **ignored** are considered. Disabled projects are never backed up.
 - **One backup per Docker server runs at a time.** The concurrency setting caps total jobs, but a single source host never gets parallel dumps.

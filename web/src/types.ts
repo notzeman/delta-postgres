@@ -138,6 +138,10 @@ export interface DockerServer {
   ssh_username: string | null;
   tls_verify: boolean;
   enabled: boolean;
+  /** Backup-only server: restores into its databases are refused. */
+  production: boolean;
+  /** Pinned SSH host key fingerprint ("<type> SHA256:<hash>"). */
+  ssh_host_key: string | null;
   hasCa?: boolean;
   hasCert?: boolean;
   hasKey?: boolean;
@@ -149,6 +153,7 @@ export interface DockerServer {
     version?: string;
     apiVersion?: string;
     error?: string;
+    hostKey?: string | null;
   };
   projectCount?: number;
 }

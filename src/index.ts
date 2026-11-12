@@ -13,6 +13,8 @@ import { startScheduler, stopScheduler } from "./scheduler";
 import { runAutoDiscovery } from "./autoDiscover";
 import { borgVersion } from "./borg";
 import { dockerVersion } from "./docker";
+import { closeAllSshConnections } from "./sshPool";
+import { stopAllWatchers } from "./containerCache";
 
 async function main(): Promise<void> {
   ensureRuntimeDirs();
@@ -186,6 +188,8 @@ async function main(): Promise<void> {
     if (discoveryTimer) clearInterval(discoveryTimer);
     clearTimeout(discoveryStartup);
     await app.close();
+    stopAllWatchers();
+    closeAllSshConnections();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));

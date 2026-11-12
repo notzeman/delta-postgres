@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -462,6 +462,8 @@ export default function Projects() {
   const [removeTarget, setRemoveTarget] = useState<Project | null>(null);
   const [actionError, setActionError] = useState("");
   const serverQuery = serverFilter === "all" ? "" : `?serverId=${serverFilter}`;
+  // Set by "Rescan" so the next discovery request bypasses the server cache.
+  const forceRefresh = useRef(false);
   const projectsParams = new URLSearchParams();
   if (serverFilter !== "all") projectsParams.set("serverId", serverFilter);
   projectsParams.set("includeIgnored", "1");
@@ -475,7 +477,12 @@ export default function Projects() {
   });
   const discoveryQuery = useQuery({
     queryKey: ["discovery", serverFilter],
-    queryFn: () => api<DiscoveryResponse>(`/discovery${serverQuery}`),
+    queryFn: () => {
+      const refresh = forceRefresh.current;
+      forceRefresh.current = false;
+      const suffix = refresh ? `${serverQuery ? "&" : "?"}refresh=1` : "";
+      return api<DiscoveryResponse>(`/discovery${serverQuery}${suffix}`);
+    },
     // Discovery performs Docker scans and auto-imports. Do not run it just
     // because the Projects page was opened; only when Detected/Ignored is
     // viewed or the user explicitly asks for a Rescan.
@@ -599,6 +606,7 @@ export default function Projects() {
           <Button
             onClick={() => {
               setScanRequested(true);
+              forceRefresh.current = true;
               queryClient.invalidateQueries({ queryKey: ["discovery"] });
               queryClient.invalidateQueries({ queryKey: ["projects"] });
             }}

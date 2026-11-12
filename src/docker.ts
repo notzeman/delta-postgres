@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { spawn } from "child_process";
 import { Writable } from "stream";
 import { dockerClient, type ServerRow } from "./servers";
@@ -25,6 +26,31 @@ export interface ExecResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+}
+
+/**
+ * Environment for every psql / pg_dump this app runs for discovery and backups.
+ * libpq applies PGOPTIONS to the session, so even a bug in this app cannot
+ * write to a source database: any write fails with "read-only transaction".
+ * PGAPPNAME makes these sessions easy to identify in pg_stat_activity.
+ * (Restore is the only write path and deliberately does not use this.)
+ */
+export const PG_READ_ONLY_ENV = [
+  "PGAPPNAME=delta-postgres",
+  "PGOPTIONS=-c default_transaction_read_only=on",
+];
+
+/** Discovery queries are tiny; bound them so they can never pile up on prod. */
+const PG_DISCOVERY_ENV = [
+  "PGAPPNAME=delta-postgres",
+  "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000",
+];
+
+export class ExecAbortedError extends Error {
+  constructor() {
+    super("Command aborted");
+    this.name = "ExecAbortedError";
+  }
 }
 
 function parseEnv(envList: string[] | undefined): Record<string, string> {
@@ -62,19 +88,74 @@ export function normalizeContainerInfo(info: any): ContainerInfo {
   };
 }
 
+/**
+ * Build ContainerInfo from a `docker ps` list entry. The list already carries
+ * everything except environment variables, which are only needed for
+ * PostgreSQL containers (POSTGRES_USER / POSTGRES_DB).
+ */
+function containerInfoFromListItem(item: any): ContainerInfo {
+  const labels = item.Labels || {};
+  return {
+    id: item.Id,
+    name: String(item.Names?.[0] || "").replace(/^\//, ""),
+    image: item.Image || "",
+    state: item.State || "unknown",
+    status: item.State || "unknown",
+    labels,
+    env: {},
+    composeProject: labels["com.docker.compose.project"] || null,
+    composeService: labels["com.docker.compose.service"] || null,
+    workingDir: labels["com.docker.compose.project.working_dir"] || null,
+    mounts: (item.Mounts || []).map((m: any) => ({
+      type: m.Type,
+      destination: m.Destination,
+      name: m.Name,
+    })),
+    networks: Object.keys(item.NetworkSettings?.Networks || {}),
+    created: item.Created ? new Date(item.Created * 1000).toISOString() : "",
+  };
+}
+
+/**
+ * Whether a list entry needs a full inspect: PostgreSQL images (to read env),
+ * plus entries whose image shows as a bare ID (the tag was re-pointed), since
+ * only inspect reveals the configured image name.
+ */
+function needsInspect(item: any): boolean {
+  const image = String(item.Image || "");
+  return isPostgresImage(image) || /^(sha256:)?[0-9a-f]{12,64}$/i.test(image);
+}
+
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export async function listAllContainers(server?: ServerRow | null): Promise<ContainerInfo[]> {
   const docker = dockerClient(server);
   const list = await docker.listContainers({ all: true });
-  const infos: ContainerInfo[] = [];
-  for (const item of list) {
+  const infos = await mapWithLimit(list, 4, async (item: any) => {
+    if (!needsInspect(item)) return containerInfoFromListItem(item);
     try {
-      const info = await docker.getContainer(item.Id).inspect();
-      infos.push(normalizeContainerInfo(info));
+      return normalizeContainerInfo(await docker.getContainer(item.Id).inspect());
     } catch {
       /* container may have disappeared */
+      return null;
     }
-  }
-  return infos;
+  });
+  return infos.filter((info): info is ContainerInfo => info !== null);
 }
 
 export async function getContainer(
@@ -139,20 +220,68 @@ export async function execCapture(
 }
 
 /**
+ * Docker has no API to stop an exec, and closing the attach stream does NOT
+ * stop the command: dockerd keeps it running and discards its output. So
+ * streaming commands run under a tiny `sh` wrapper whose $0 carries a unique
+ * tag (visible in /proc/<pid>/cmdline). `"$@"; exit $?` is not the last
+ * command, so sh forks instead of exec'ing and stays as the tagged parent.
+ */
+const EXEC_TAG_PREFIX = "delta-exec-";
+
+function taggedCommand(cmd: string[], tag: string): string[] {
+  return ["sh", "-c", '"$@"; exit $?', `${EXEC_TAG_PREFIX}${tag}`, ...cmd];
+}
+
+/**
+ * SIGTERM the tagged wrapper's direct children (e.g. pg_dump, which exits
+ * cleanly and closes its DB session) and then the wrapper itself. Only reads
+ * /proc and writes nothing inside the container. The parent PID is parsed
+ * after the last ") " of /proc/<pid>/stat, so process names containing spaces
+ * can never be mistaken for a match.
+ */
+async function terminateTaggedExec(
+  containerId: string,
+  tag: string,
+  server?: ServerRow | null,
+): Promise<void> {
+  const script = [
+    't="$1"',
+    "for d in /proc/[0-9]*; do",
+    '  c=$(tr "\\000" " " 2>/dev/null < "$d/cmdline") || continue',
+    `  case "$c" in "sh -c "*" ${EXEC_TAG_PREFIX}$t "*) ;; *) continue ;; esac`,
+    '  w="${d#/proc/}"',
+    "  for k in /proc/[0-9]*; do",
+    '    s=$(cat 2>/dev/null < "$k/stat") || continue',
+    '    s="${s##*) }"',
+    "    set -- $s",
+    '    [ "$2" = "$w" ] && kill -TERM "${k#/proc/}" 2>/dev/null',
+    "  done",
+    '  kill -TERM "$w" 2>/dev/null',
+    "done",
+    "true",
+  ].join("\n");
+  await execCapture(containerId, ["sh", "-c", script, "sh", tag], {}, server);
+}
+
+/**
  * Run a command in a container and stream stdout to a file (binary safe).
+ * If `signal` aborts, or the stream is cut off before the command finishes,
+ * the command is terminated inside the container instead of running on.
  */
 export async function execToFile(
   containerId: string,
   cmd: string[],
   destFile: string,
   onLine?: (line: string) => void,
-  opts: { env?: string[]; user?: string } = {},
+  opts: { env?: string[]; user?: string; signal?: AbortSignal } = {},
   server?: ServerRow | null,
 ): Promise<ExecResult> {
+  if (opts.signal?.aborted) throw new ExecAbortedError();
   const docker = dockerClient(server);
   const container = docker.getContainer(containerId);
+  const tag = crypto.randomUUID();
   const exec = await container.exec({
-    Cmd: cmd,
+    Cmd: taggedCommand(cmd, tag),
     AttachStdout: true,
     AttachStderr: true,
     Tty: false,
@@ -178,11 +307,38 @@ export async function execToFile(
     },
   });
   (docker as any).modem.demuxStream(stream, out, err);
-  await new Promise<void>((resolve, reject) => {
-    stream.on("end", resolve);
-    stream.on("error", reject);
-  });
-  await new Promise<void>((resolve) => out.end(resolve));
+  let aborted = false;
+  let ended = false;
+  let stopWaiting: () => void = () => {};
+  const onAbort = () => {
+    aborted = true;
+    // Don't wait for the transport to confirm the close (over SSH that needs a
+    // round trip with the remote); terminate the command right away instead.
+    stopWaiting();
+    stream.destroy();
+  };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      stopWaiting = resolve;
+      stream.on("end", () => {
+        ended = true;
+        resolve();
+      });
+      // A dropped connection closes without 'end'; exec.inspect below then
+      // reports the command as not finished, so the dump counts as failed.
+      stream.on("close", resolve);
+      stream.on("error", (error: Error) => (aborted ? resolve() : reject(error)));
+    });
+  } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
+    await new Promise<void>((resolve) => out.end(resolve));
+    if (aborted || !ended) {
+      // Never leave an unattended pg_dump running on the source host.
+      await terminateTaggedExec(containerId, tag, server).catch(() => {});
+    }
+  }
+  if (aborted) throw new ExecAbortedError();
   if (onLine && errBuf.trim()) onLine(errBuf);
   const info = await exec.inspect();
   return { exitCode: info.ExitCode ?? 1, stdout: "", stderr };
@@ -232,7 +388,7 @@ export async function containerDatabases(
       "-Atc",
       "SELECT datname || '|' || pg_database_size(datname) FROM pg_database WHERE datistemplate=false AND datallowconn=true ORDER BY datname",
     ],
-    {},
+    { env: PG_DISCOVERY_ENV },
     server,
   );
   if (result.exitCode !== 0) {
@@ -248,6 +404,49 @@ export async function containerDatabases(
     });
 }
 
+/**
+ * Database list and server version in a single read-only psql call.
+ */
+export async function containerPgInfo(
+  containerId: string,
+  pgUser: string,
+  server?: ServerRow | null,
+): Promise<{ databases: Array<{ name: string; sizeBytes: number }>; version: string }> {
+  const result = await execCapture(
+    containerId,
+    [
+      "psql",
+      "-U",
+      pgUser,
+      "-d",
+      "postgres",
+      "-Atc",
+      "SELECT '#version|' || current_setting('server_version') " +
+        "UNION ALL SELECT datname || '|' || pg_database_size(datname) FROM pg_database " +
+        "WHERE datistemplate=false AND datallowconn=true",
+    ],
+    { env: PG_DISCOVERY_ENV },
+    server,
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || "Unable to list databases");
+  }
+  let version = "";
+  const databases: Array<{ name: string; sizeBytes: number }> = [];
+  for (const raw of result.stdout.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("#version|")) {
+      version = line.slice("#version|".length);
+      continue;
+    }
+    const idx = line.lastIndexOf("|");
+    databases.push({ name: line.slice(0, idx), sizeBytes: Number(line.slice(idx + 1)) || 0 });
+  }
+  databases.sort((a, b) => a.name.localeCompare(b.name));
+  return { databases, version };
+}
+
 export async function postgresVersion(
   containerId: string,
   pgUser: string,
@@ -256,7 +455,7 @@ export async function postgresVersion(
   const result = await execCapture(
     containerId,
     ["psql", "-U", pgUser, "-d", "postgres", "-Atc", "SHOW server_version"],
-    {},
+    { env: PG_DISCOVERY_ENV },
     server,
   );
   if (result.exitCode !== 0) return "";

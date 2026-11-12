@@ -470,7 +470,7 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: ["archive-databases", projectId] });
       snackbar.success(`Dump stored as Borg archive "${data.archive.name}".`);
 
-      if (importRestoreNow) {
+      if (importRestoreNow && !server?.production) {
         const target = importOverwrite
           ? primaryDb || data.archive.database
           : `restore_${(primaryDb || data.archive.database).replace(
@@ -1040,13 +1040,18 @@ export default function ProjectDetail() {
                   </p>
                   <div className="rounded-xl border border-white/5 bg-ink-950/40 p-3">
                     <Switch
-                      checked={importRestoreNow}
+                      checked={importRestoreNow && !server?.production}
                       onChange={setImportRestoreNow}
+                      disabled={Boolean(server?.production)}
                       label="Restore after import"
-                      description="Store the dump in Borg, then immediately restore it into this project."
+                      description={
+                        server?.production
+                          ? "Disabled: this project runs on a production (backup-only) server."
+                          : "Store the dump in Borg, then immediately restore it into this project."
+                      }
                     />
                   </div>
-                  {importRestoreNow ? (
+                  {importRestoreNow && !server?.production ? (
                     <>
                       <div className="rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs">
                         <div className="flex items-center justify-between gap-3">
@@ -1128,7 +1133,26 @@ export default function ProjectDetail() {
         </div>
       ) : null}
 
-      {tab === "restore" ? (
+      {tab === "restore" && server?.production ? (
+        <Card>
+          <CardHeader
+            title="Restore disabled"
+            subtitle="This project runs on a production (backup-only) server"
+          />
+          <div className="space-y-2 p-5 text-xs text-slate-300">
+            <p className="flex items-center gap-2 text-amber-300">
+              <ShieldCheck className="h-4 w-4" /> {server.name} is marked as production.
+            </p>
+            <p>
+              Delta Postgres only takes read-only dumps from this server and never writes to its
+              databases. To restore, export the archive and restore it on another server, or turn
+              off the production flag in Servers if you really intend to write here.
+            </p>
+          </div>
+        </Card>
+      ) : null}
+
+      {tab === "restore" && !server?.production ? (
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>
             <CardHeader

@@ -1,10 +1,8 @@
 import {
-  listAllContainers,
   isPostgresImage,
-  containerDatabases,
-  postgresVersion,
   type ContainerInfo,
 } from "./docker";
+import { cachedContainers, cachedPgInfo } from "./containerCache";
 import {
   getAllProjects,
   getIgnoredProjects,
@@ -72,9 +70,17 @@ function pgDefaultDbFor(container: ContainerInfo, user: string): string | null {
   return container.env.POSTGRES_DB || container.env.PGDATABASE || user;
 }
 
-export async function discoverProjects(server: ServerRow): Promise<DiscoveredProject[]> {
+/**
+ * Pass `prefetched` to reuse a container list already fetched for this server
+ * instead of listing the remote host again.
+ */
+export async function discoverProjects(
+  server: ServerRow,
+  prefetched?: ContainerInfo[],
+  opts: { fresh?: boolean } = {},
+): Promise<DiscoveredProject[]> {
   const [containers, projects, ignored] = await Promise.all([
-    listAllContainers(server),
+    prefetched ?? cachedContainers(server, opts),
     getAllProjects(),
     getIgnoredProjects(server.id),
   ]);
@@ -138,8 +144,9 @@ export async function discoverProjects(server: ServerRow): Promise<DiscoveredPro
       };
       if (container.state === "running") {
         try {
-          detail.databases = await containerDatabases(container.id, user, server);
-          detail.pgVersion = await postgresVersion(container.id, user, server);
+          const info = await cachedPgInfo(server, container.id, user, opts);
+          detail.databases = info.databases;
+          detail.pgVersion = info.version;
           version = detail.pgVersion || version;
           for (const db of detail.databases) {
             allDbs.add(db.name);
@@ -212,8 +219,10 @@ export async function inspectForManualAdd(idOrName: string, server: ServerRow): 
   let error: string | undefined;
   if (container.state === "running" && isPostgres) {
     try {
-      databases = await containerDatabases(container.id, pgUser, server);
-      pgVersion = await postgresVersion(container.id, pgUser, server);
+      // Explicit "inspect before adding" action: always live.
+      const info = await cachedPgInfo(server, container.id, pgUser, { fresh: true });
+      databases = info.databases;
+      pgVersion = info.version;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -224,12 +233,15 @@ export async function inspectForManualAdd(idOrName: string, server: ServerRow): 
 /**
  * Summarize every Compose project on a server, including those without PostgreSQL.
  */
-export async function composeProjectSummary(server: ServerRow): Promise<{
+export async function composeProjectSummary(
+  server: ServerRow,
+  prefetched?: ContainerInfo[],
+): Promise<{
   projects: ComposeProjectSummary[];
   total: number;
   withPostgres: number;
 }> {
-  const containers = await listAllContainers(server);
+  const containers = prefetched ?? (await cachedContainers(server));
   const map = new Map<string, ComposeProjectSummary>();
   for (const container of containers) {
     if (!container.composeProject) continue;

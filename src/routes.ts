@@ -29,14 +29,9 @@ import {
   checkLoginRate,
   resetLoginRate,
 } from "./auth";
-import {
-  listAllContainers,
-  isPostgresImage,
-  dockerVersion,
-  containerDatabases,
-  postgresVersion,
-} from "./docker";
+import { isPostgresImage, dockerVersion } from "./docker";
 import { discoverProjects, inspectForManualAdd, composeProjectSummary } from "./discovery";
+import { cachedContainers, cachedPgInfo, forgetServer } from "./containerCache";
 import { autoImportDiscoveredProjects } from "./autoDiscover";
 import { resolveProjectContainer } from "./containerResolver";
 import {
@@ -44,6 +39,7 @@ import {
   getServer,
   getLocalServer,
   serverStatus,
+  closeServerConnection,
   toPublicServer,
   type ServerRow,
 } from "./servers";
@@ -259,6 +255,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tlsKey: z.string().nullable().optional(),
       tlsVerify: z.boolean().optional(),
       enabled: z.boolean().optional(),
+      production: z.boolean().optional(),
       skipTest: z.boolean().optional(),
     });
     const parsed = schema.safeParse(request.body);
@@ -306,6 +303,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tls_key: body.tlsKey || null,
       tls_verify: body.tlsVerify !== false,
       enabled: body.enabled !== false,
+      production: body.production === true,
+      ssh_host_key: null,
       created_at: "",
       updated_at: "",
     };
@@ -326,8 +325,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
     const { rows } = await pool.query<ServerRow>(
       `INSERT INTO servers(name, slug, type, protocol, host, port, socket_path,
-         ssh_username, ssh_password, tls_ca, tls_cert, tls_key, tls_verify, enabled)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ssh_username, ssh_password, tls_ca, tls_cert, tls_key, tls_verify, enabled,
+         production, ssh_host_key)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        RETURNING *`,
       [
         temp.name,
@@ -344,11 +344,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         encryptSecret(temp.tls_key),
         temp.tls_verify,
         temp.enabled,
+        temp.production,
+        // Pin the host key seen during the connection test (trust on first use).
+        temp.type === "ssh" ? status?.hostKey || null : null,
       ],
     );
     await audit(getActor(request), "server.create", slug, {
       type: temp.type,
       host: temp.host,
+      production: temp.production,
     });
     return reply.code(201).send({
       server: { ...toPublicServer(rows[0]), status: status || (await serverStatus(rows[0])) },
@@ -372,6 +376,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tlsKey: z.string().nullable().optional(),
       tlsVerify: z.boolean().optional(),
       enabled: z.boolean().optional(),
+      production: z.boolean().optional(),
+      resetHostKey: z.boolean().optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
@@ -401,6 +407,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (body.tlsKey !== undefined) add("tls_key", body.tlsKey ? encryptSecret(body.tlsKey) : null);
     if (body.tlsVerify !== undefined) add("tls_verify", body.tlsVerify);
     if (body.enabled !== undefined) add("enabled", body.enabled);
+    if (body.production !== undefined) add("production", body.production);
+    // A different host (or an explicit reset) needs a freshly trusted host key.
+    const hostChanged =
+      (body.host !== undefined && body.host !== server.host) ||
+      (body.port !== undefined && body.port !== server.port);
+    const resetHostKey = Boolean(body.resetHostKey) || hostChanged;
+    if (resetHostKey) add("ssh_host_key", null);
     if (!updates.length) {
       return { server: { ...toPublicServer(server), status: await serverStatus(server) } };
     }
@@ -410,6 +423,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
        WHERE id = $${params.length} RETURNING *`,
       params,
     );
+    // Reconnect so the next connection re-verifies (and re-pins) the host key.
+    if (resetHostKey) closeServerConnection(server);
+    // Settings changed: drop cached containers and restart the events watcher.
+    forgetServer(id);
     const auditMeta: Record<string, any> = {};
     for (const [key, value] of Object.entries(body)) {
       if (["sshPassword", "tlsCa", "tlsCert", "tlsKey"].includes(key)) {
@@ -442,6 +459,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       });
     }
     await pool.query(`DELETE FROM servers WHERE id = $1`, [id]);
+    forgetServer(id);
+    closeServerConnection(server);
     await audit(getActor(request), "server.delete", server.slug, { projectCount, force });
     return {
       ok: true,
@@ -502,9 +521,18 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tls_key: body.tlsKey || null,
       tls_verify: body.tlsVerify !== false,
       enabled: true,
+      production: false,
+      ssh_host_key: null,
       created_at: "",
       updated_at: "",
     };
+    // Testing a saved SSH server at the same address: verify its pinned host key.
+    if (temp.type === "ssh" && body.id) {
+      const stored = await getServer(body.id);
+      if (stored?.ssh_host_key && stored.host === temp.host && (stored.port || 22) === temp.port) {
+        temp.ssh_host_key = stored.ssh_host_key;
+      }
+    }
     const status = await serverStatus(temp);
     return status;
   });
@@ -519,7 +547,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const server = await getServer(Number((request.params as any).id));
     if (!server) return sendError(reply, 404, "Docker server not found");
     try {
-      const discovered = await discoverProjects(server);
+      const discovered = await discoverProjects(server, undefined, { fresh: true });
       const added = await autoImportDiscoveredProjects(discovered);
       return {
         ok: true,
@@ -618,6 +646,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
   // ---------- Discovery ----------
   app.get("/api/discovery", async (request) => {
     const serverId = queryServerId(request);
+    // "Rescan" asks for live data; background loads may use the cache.
+    const fresh = (request.query as any)?.refresh === "1";
     let servers = await listServers();
     servers = serverId
       ? servers.filter((server) => server.id === serverId)
@@ -634,12 +664,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
 
     for (const server of servers) {
       try {
-        let discovered = await discoverProjects(server);
+        // List the server's containers once and reuse it for every step below.
+        const containers = await cachedContainers(server, { fresh });
+        let discovered = await discoverProjects(server, containers, { fresh });
         const added = await autoImportDiscoveredProjects(discovered);
-        if (added > 0) discovered = await discoverProjects(server);
+        // Re-run only to link the newly added projects; psql results are cached.
+        if (added > 0) discovered = await discoverProjects(server, containers);
         autoAdded += added;
         allDiscovered.push(...discovered);
-        const compose = await composeProjectSummary(server);
+        const compose = await composeProjectSummary(server, containers);
         composeProjects.push(...compose.projects);
         total += compose.total;
         withPostgres += compose.withPostgres;
@@ -699,7 +732,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const serverId = queryServerId(request);
     const server = serverId ? await getServer(serverId) : await getLocalServer();
     if (!server) return sendError(reply, 404, "Docker server not found");
-    const containers = await listAllContainers(server);
+    const containers = await cachedContainers(server);
     return {
       serverId: server.id,
       containers: containers
@@ -767,7 +800,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       [...new Set(projects.map((project) => project.server_id))].map(async (id) => {
         const server = serverMap.get(id);
         if (!server) return;
-        containersByServer.set(id, await listAllContainers(server).catch(() => []));
+        containersByServer.set(id, await cachedContainers(server).catch(() => []));
       }),
     );
     const result = await Promise.all(
@@ -919,8 +952,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         resolvedProject = (await getProject(project.id)) || project;
       }
       if (container.state === "running") {
-        liveDatabases = await containerDatabases(container.id, project.pg_user, server);
-        version = await postgresVersion(container.id, project.pg_user, server);
+        // This page polls every 15s; never run psql on the source that often.
+        const info = await cachedPgInfo(server!, container.id, project.pg_user);
+        liveDatabases = info.databases;
+        version = info.version;
       }
     } catch {
       /* container may be missing */
@@ -1292,6 +1327,17 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
     const server = await getServer(project.server_id);
     if (!server) return sendError(reply, 404, "Docker server not found");
+    if (server.production) {
+      await audit(getActor(request), "archive.restore.blocked", `${project.slug}/${body.data.archive}`, {
+        server: server.name,
+      }).catch(() => {});
+      return sendError(
+        reply,
+        403,
+        `${server.name} is marked as a production server: restores into its databases are disabled. ` +
+          "Export the archive and restore it elsewhere, or turn off the production flag in server settings.",
+      );
+    }
 
     const lines: string[] = [];
     reply.hijack();
