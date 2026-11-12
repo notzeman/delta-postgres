@@ -24,6 +24,43 @@ async function main(): Promise<void> {
     bodyLimit: 10 * 1024 * 1024,
   });
 
+  function normalizeRequestHost(value: string): string {
+    const host = value.trim().toLowerCase();
+    if (!host) return "";
+    if (host.startsWith("[")) {
+      const end = host.indexOf("]");
+      return end === -1 ? host : host.slice(1, end);
+    }
+    const first = host.indexOf(":");
+    const last = host.lastIndexOf(":");
+    if (first !== -1 && first === last) return host.slice(0, first);
+    return host;
+  }
+
+  function hostIsAllowed(host: string, allowed: string[]): boolean {
+    if (!host) return false;
+    return allowed.some(
+      (entry) =>
+        entry === "*" ||
+        entry === host ||
+        (entry.startsWith("*.") && host.endsWith(entry.slice(1))),
+    );
+  }
+
+  const allowedHosts = config.allowedHosts;
+  const hostCheckEnabled = allowedHosts.length > 0 && !allowedHosts.includes("*");
+  if (hostCheckEnabled) {
+    app.addHook("onRequest", async (request, reply) => {
+      // The container healthcheck calls loopback directly.
+      if (request.url === "/api/health" || request.url.startsWith("/api/health?")) return;
+      const host = normalizeRequestHost(request.headers.host || "");
+      if (!hostIsAllowed(host, allowedHosts)) {
+        request.log.warn({ host, allowedHosts }, "Rejected disallowed Host header");
+        return reply.code(400).send({ error: `Invalid host header: ${host || "(missing)"}` });
+      }
+    });
+  }
+
   await app.register(cookie);
   await app.register(multipart, {
     limits: {
@@ -105,6 +142,7 @@ async function main(): Promise<void> {
       users: userCount,
       defaultCron: config.defaultCron,
       concurrency: concurrency,
+      allowedHosts: config.allowedHosts.length ? config.allowedHosts : "*",
     },
     "DeltaPostgres starting",
   );

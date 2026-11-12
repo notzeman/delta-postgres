@@ -20,9 +20,26 @@ const sessionSecret =
   process.env.SESSION_SECRET ||
   ensureSecretFile(path.join(dataDir, "secrets", "session.secret"));
 
+function normalizeAllowedHost(value: string): string {
+  const host = value.trim().toLowerCase();
+  if (!host || host === "*") return host;
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(1, end);
+  }
+  const first = host.indexOf(":");
+  const last = host.lastIndexOf(":");
+  if (first !== -1 && first === last) return host.slice(0, first);
+  return host;
+}
+
 export const config = {
   port: Number(process.env.PORT || 8080),
   host: process.env.HOST || "0.0.0.0",
+  allowedHosts: (process.env.ALLOWED_HOSTS || "")
+    .split(",")
+    .map(normalizeAllowedHost)
+    .filter(Boolean),
   dataDir,
   backupRoot,
   databaseUrl:
