@@ -94,7 +94,7 @@ function SnackbarCard({
   return (
     <div
       role={tone.role}
-      className={`pointer-events-auto relative w-full overflow-hidden rounded-xl border bg-ink-900/95 p-3.5 shadow-2xl shadow-black/30 backdrop-blur-xl ${tone.panel}`}
+      className={`pointer-events-auto relative w-full overflow-hidden rounded-xl border bg-ink-900/95 p-3.5 shadow-2xl shadow-black/30 ${tone.panel}`}
     >
       <div className="flex items-start gap-3">
         <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${tone.iconClass}`} />

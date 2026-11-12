@@ -50,7 +50,7 @@ const optionClass =
   "group flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none data-[focus]:bg-white/10 data-[selected]:text-slate-100 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40";
 
 const panelClass =
-  "z-50 max-h-72 overflow-auto rounded-xl border border-white/10 bg-ink-900/95 p-1 shadow-2xl shadow-black/40 backdrop-blur-xl [--anchor-gap:6px]";
+  "z-50 max-h-72 overflow-auto rounded-xl border border-white/10 bg-ink-900 p-1 shadow-pop [--anchor-gap:6px]";
 
 export default function Picker({
   value,

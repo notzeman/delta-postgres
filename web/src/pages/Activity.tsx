@@ -9,6 +9,7 @@ import {
   Card,
   CardHeader,
   EmptyState,
+  SkeletonRows,
   Spinner,
   StatusBadge,
   Tabs,
@@ -38,10 +39,7 @@ export default function Activity() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent-400/80">
-            Activity
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-100">
             Backup jobs
           </h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -75,7 +73,7 @@ export default function Activity() {
           }
         />
         {jobsQuery.isLoading ? (
-          <Spinner />
+          <SkeletonRows rows={6} label="Loading backup jobs" />
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={<ActivityIcon className="h-8 w-8" />}
@@ -85,7 +83,7 @@ export default function Activity() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
+              <thead className="border-b border-white/[0.07] text-left text-xs font-medium text-slate-500">
                 <tr>
                   <th className="px-5 py-3 font-medium">Job</th>
                   <th className="px-3 py-3 font-medium">Project</th>

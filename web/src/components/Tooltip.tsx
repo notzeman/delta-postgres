@@ -98,7 +98,7 @@ export default function Tooltip({
                 left: coords?.left ?? -9999,
               }}
               className={cn(
-                "tooltip-panel pointer-events-none z-[100] max-w-xs rounded-lg border border-white/10 bg-ink-950/95 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-slate-200 shadow-xl shadow-black/30 backdrop-blur-md",
+                "tooltip-panel pointer-events-none z-[100] max-w-xs rounded-lg border border-white/10 bg-ink-900 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-slate-200 shadow-xl shadow-black/30",
                 !coords && "opacity-0",
                 className,
               )}

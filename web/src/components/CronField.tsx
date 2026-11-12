@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../api";
+import type { Health } from "../types";
 import { Field, Input } from "./ui";
 import Picker from "./Picker";
 
@@ -30,6 +33,12 @@ export default function CronField({
   hint?: string;
 }) {
   const match = CRON_PRESETS.find((preset) => preset.value === value);
+  const health = useQuery({
+    queryKey: ["health"],
+    queryFn: () => api<Health>("/health"),
+    staleTime: 30_000,
+  });
+  const timezone = health.data?.timezone;
   const [mode, setMode] = useState<string>(() => {
     if (!value && allowInherit) return "";
     return match ? match.value : value ? CUSTOM : allowInherit ? "" : CRON_PRESETS[3].value;
@@ -73,8 +82,9 @@ export default function CronField({
           />
         ) : null}
         {mode ? (
-          <p className="font-mono text-[11px] text-slate-500">
-            {value || "—"} · timezone Asia/Kolkata
+          <p className="text-xs text-slate-500">
+            <span className="num">{value || "inherits global schedule"}</span>
+            {timezone ? <> in {timezone}</> : null}
           </p>
         ) : null}
       </div>

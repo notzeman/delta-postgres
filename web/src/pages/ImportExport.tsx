@@ -65,10 +65,7 @@ export default function ImportExport() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent-400/80">
-          Transfer
-        </p>
-        <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-100">
           Import & export
         </h2>
         <p className="mt-1 max-w-3xl text-sm text-slate-500">

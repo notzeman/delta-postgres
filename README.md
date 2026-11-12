@@ -1,282 +1,69 @@
-# DeltaPostgres
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/hero-light.svg">
+  <img alt="DeltaPostgres: scheduled, encrypted, deduplicated backups for every PostgreSQL container on your Docker hosts" src="assets/readme/hero-dark.svg" width="100%">
+</picture>
 
-A self-hosted dashboard for **PostgreSQL container backups** using **BorgBackup**.
+<p>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5B9BE6?style=flat-square"></a>
+  <img alt="Runs on Docker Compose" src="https://img.shields.io/badge/runs%20on-Docker%20Compose-5B9BE6?style=flat-square">
+  <img alt="BorgBackup 1.2" src="https://img.shields.io/badge/storage-BorgBackup-F0A93B?style=flat-square">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/backs%20up-PostgreSQL-5B9BE6?style=flat-square">
+</p>
 
-It discovers PostgreSQL containers through the Docker Engine API, schedules logical `pg_dump` snapshots, and stores them in encrypted, deduplicated Borg repositories. The UI lets you manage projects, trigger manual backups, browse and verify archives, restore databases, and import/export backup data.
+DeltaPostgres is a self-hosted dashboard that finds the PostgreSQL containers on your Docker hosts, dumps them on a schedule, and keeps every dump in an encrypted, deduplicated [Borg](https://www.borgbackup.org/) repository. Each run is a full logical dump, but Borg only stores the chunks that changed.
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/screenshot-overview-light.png">
+  <img alt="DeltaPostgres overview: 274.8 MB of dumps stored as 12.3 MB of new data, a 22.3× deduplication ratio, with managed projects, storage growth and recent jobs" src="assets/readme/screenshot-overview-dark.png" width="100%">
+</picture>
+
+<sub>A demo project after four backups: 274.8 MB of dumps, 12.3 MB actually stored.</sub>
+
+## Why DeltaPostgres
+
+- **Full dumps at incremental cost.** Dumps are written uncompressed (`pg_dump -Fc -Z 0`) so Borg can deduplicate them, then Borg compresses once with zstd. Unchanged tables cost almost nothing.
+- **Zero-config discovery.** Every Docker Compose project on each connected host is scanned. Projects that contain PostgreSQL are added automatically with their databases and `POSTGRES_USER`.
+- **One encrypted repository per project.** Each project gets its own `repokey-blake2` Borg repo, its own schedule and its own retention.
+- **Safe restores by default.** Restores go into a new scratch database. Overwriting a live database requires typing its name.
+- **Many hosts, one console.** Connect remote Docker Engine APIs over TCP or mutual TLS. Discovery, backups and restores are scoped per server.
+
+> [!NOTE]
+> This is logical backup with deduplicated storage, not WAL-level point-in-time recovery. If you need PITR, pair it with a tool such as pgBackRest.
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/how-it-works-light.svg">
+  <img alt="Backup pipeline: 1 dump databases with pg_dumpall -g and pg_dump -Fc -Z 0; 2 stage globals.sql, one dump per database and manifest.json; 3 borg create with zstd and repokey-blake2; 4 borg prune and borg compact" src="assets/readme/how-it-works-dark.svg" width="100%">
+</picture>
+
+For each run the dashboard executes inside the target container:
+
+```bash
+pg_dumpall -U <user> --globals-only
+pg_dump    -U <user> -Fc -Z 0 -d <database>     # one per selected database
 ```
-PostgreSQL container ── pg_dump -Fc -Z 0 ──▶ Borg repository
-                                             (chunk dedup + zstd + repokey-blake2)
+
+It writes a manifest, then creates one Borg archive and applies retention:
+
+```bash
+borg create --stats --json --compression auto,zstd,3 <repo>::<timestamp> .
+borg prune  --keep-daily 7 --keep-weekly 4 --keep-monthly 6 <repo>
+borg compact <repo>
 ```
 
-> Borg provides **deduplicated incremental storage**, not PostgreSQL WAL-level point-in-time recovery. Each run is a full logical dump; Borg only stores changed chunks. WAL/PITR can be added later with a tool such as pgBackRest.
-
----
-
-## Features
-
-- **Full Docker Compose scan** — discovers every Compose project on the host and flags which ones contain PostgreSQL.
-- **Multi-server support** — connect remote Docker Engine APIs over TCP or TLS, and scope projects, discovery, schedules, and backups by server.
-- **Automatic project import** — PostgreSQL Compose projects are added to the dashboard automatically; new projects are picked up on rescan and every few minutes.
-- **Manual onboarding** — add containers the scan misses, with live database/user detection.
-- **Move to Ignored** — “removing” a project moves it to Ignored, preserving its archives, jobs, and Borg repository. Restore it from the Projects page.
-- **Global + per-project schedules** — cron presets or custom expressions, next-run preview, persistent queue.
-- **Manual backups** — one project or every enabled project.
-- **Borg repositories** — one encrypted repo per project, zstd compression, block-level delta storage.
-- **Retention** — keep daily/weekly/monthly counts, `borg prune` + `borg compact`.
-- **Restore wizard** — restore into a new scratch database by default; destructive overwrite requires confirmation.
-- **Archive verification** — `borg check --verify-data`.
-- **Import/export** — project-level transfer tab plus global archive/repo/catalog exports.
-- **Light & dark mode** — topbar theme switcher with persisted preference.
-- **Polished controls** — searchable React dropdowns, custom checkboxes/switches, and animated tooltips.
-- **Unsaved-changes guard** — leaving Settings or project settings with pending edits prompts to save, discard, or cancel.
-- **Self-healing container lookup** — backup and restore re-resolve the project container by name/compose labels, and a **Refresh container** button repairs stale IDs.
-- **Live operations** — job history, persisted logs, health checks for Docker/Borg/DB/disk.
-- **Postgres metadata** — the dashboard's own state lives in a dedicated PostgreSQL 17 container.
-- **Database-backed admin users** — bcrypt-hashed credentials created with an interactive CLI command, httpOnly JWT cookie, rate limiting, audit log.
-
----
-
-## Requirements
-
-A server with Docker installed, ofc.
-
-### Runtime permissions
-
-The entrypoint runs as root only long enough to:
-
-- Detect the owner of `./data` or `./backups` and run the app as that UID/GID.
-- Detect the GID of `/var/run/docker.sock` and add the app user to it.
-- Chown `./data` and `./backups` if needed.
-- Drop privileges before starting the dashboard.
-
-So `APP_UID`, `APP_GID`, and `DOCKER_GID` are **not required** in `.env`. They remain optional overrides for rootless Docker, custom sockets, or unusual host ownership.
-
----
+The dashboard's own state lives in a separate PostgreSQL 17 container, which is labelled so it never appears in discovery.
 
 ## Quick start
+
+You need a Linux host with Docker and Docker Compose.
+
+**1. Clone and create `.env`**
 
 ```bash
 git clone https://github.com/notzeman/delta-postgres.git
 cd delta-postgres
 
-cp .env.example .env
-# Edit .env: set SESSION_SECRET, DASHBOARD_DB_PASSWORD, BORG_PASSPHRASE
-# UID/GID and the Docker socket GID are auto-detected by the entrypoint.
-
-mkdir -p data backups
-docker compose up -d --build
-
-# Create the first admin user (interactive: username, password, confirmation)
-docker compose exec dashboard npm run create-admin
-```
-
-Open `http://<server>:8095` and sign in with the admin user you just created.
-
-Check health:
-
-```bash
-docker compose ps
-curl -s http://127.0.0.1:8095/api/health | jq
-```
-
-> **Security:** the dashboard has root-equivalent power through every connected Docker socket or TCP endpoint. Do not expose it to the public internet without TLS and network restrictions. Prefer a private network, VPN, or a reverse proxy with authentication. Docker port publishing bypasses `ufw`; use your cloud firewall/security group as well.
-
----
-
-## Admin setup
-
-Admin users are stored in PostgreSQL with bcrypt hashes; there are no default credentials.
-
-Create an admin:
-
-```bash
-docker compose exec dashboard npm run create-admin
-```
-
-The command prompts:
-
-```text
-Username: admin
-Password: ********
-Confirm password: ********
-```
-
-Passwords are hidden while typing and must be at least 8 characters. The username is normalized to lowercase.
-
-Reset an existing admin password:
-
-```bash
-docker compose exec dashboard npm run reset-admin
-```
-
-For local development without Docker:
-
-```bash
-npm run create-admin:dev
-npm run reset-admin:dev
-```
-
-The CLI reads `DATABASE_URL` from the environment. If no admin user exists yet, the login page returns a message telling you to run the setup command.
-
----
-
-## First run
-
-1. Create an admin user with the command above and sign in.
-2. Open **Projects**. PostgreSQL Compose projects are auto-added to **Managed**; projects without PostgreSQL are listed under **Detected → Other Compose projects**.
-3. Open a project and review its databases, PostgreSQL user, schedule, and retention.
-4. Click **Backup now** to create the first archive.
-5. Use **Detected** for a full Compose scan, **Ignored** to restore moved projects, or **Add project** for manual onboarding.
-
-To move a project to **Ignored**, use the trash button on its card. Its archives, jobs, and Borg repository are kept, and the next scan will not re-add it. Restore it from the **Ignored** tab.
-
-Useful Docker labels:
-
-```yaml
-labels:
-  backup.ignore: "true"   # hide a container from discovery
-  backup.enable: "false"  # same, via the opt-out label
-```
-
----
-
-## Project discovery & removal
-
-Every Docker Compose project on each connected server is scanned. Projects containing PostgreSQL are auto-added to **Managed** with a per-project Borg repository, using all discovered databases and the container's `POSTGRES_USER`.
-
-- New Compose projects are picked up on startup, on **Rescan**, and every five minutes.
-- Opening the **Managed** tab does **not** trigger a scan. Discovery runs only on **Rescan** or when you open **Detected/Ignored**.
-- Compose projects without a PostgreSQL service are shown under **Projects → Detected → Other Compose projects**.
-- Auto-add can be disabled in **Settings → Global defaults**.
-- Use the trash button on a project card to **move it to Ignored**. Its archives, jobs, and Borg repository stay intact, and the Compose project is added to the ignore list so it is not auto-added again.
-- Open **Projects → Ignored** to unignore a project or add it back manually.
-
----
-
-## Docker servers
-
-The dashboard can manage multiple Docker Engine endpoints and scope everything by server.
-
-- **Local Docker** is seeded automatically from `DOCKER_SOCKET`.
-- **Remote Docker** hosts are added in the **Servers** page:
-  - `http` on port `2375`, or `https` on `2376`
-  - optional CA certificate, client certificate, and client key
-  - TLS verification toggle
-- Connections are tested before saving. TLS material is encrypted at rest with `SECRETS_KEY`.
-- Use **Scan now** on a server to discover and auto-add its PostgreSQL projects immediately.
-- Use the server filter on **Overview** and **Projects**, and the server selector in **Add project**.
-- Backups, archives, restore, schedules, and logs are all scoped to the project's server.
-- Removing a server with projects asks for a second confirmation and deletes the project records; Borg repository files remain on disk.
-
-> **Security:** plain `http` Docker API access is unauthenticated. Prefer mutual TLS or keep the Docker API on a private network/WireGuard tunnel. The dashboard has root-equivalent control over every connected Docker host.
-
-Remote repositories are stored under:
-
-```text
-backups/
-  <project-slug>/                 # local server
-  servers/
-    <server-slug>/
-      <project-slug>/repo/        # remote server
-```
-
----
-
-## How backups work
-
-For each run, the dashboard executes inside the target PostgreSQL container:
-
-```bash
-pg_dumpall -U <user> --globals-only
-pg_dump -U <user> -Fc -Z 0 -d <database>   # primary database by default
-```
-
-By default, only the project’s primary database is dumped (`POSTGRES_DB` / `pg_default_db`), producing a single dump file per archive. Add more databases in **Project → Settings → Databases** if you need them; the restore flow still auto-selects the primary dump.
-
-It writes a manifest, then creates one Borg archive:
-
-```bash
-borg create --stats --json --compression auto,zstd,3 <repo>::<timestamp> .
-borg prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6 <repo>
-borg compact <repo>
-```
-
-`-Z 0` keeps the dump uncompressed so Borg can deduplicate it effectively; Borg applies zstd once. Repositories use `repokey-blake2` encryption with `BORG_PASSPHRASE`.
-
-### Data layout
-
-```
-data/
-  logs/job-<id>.log
-  secrets/session.secret
-  secrets/borg.passphrase      # only when BORG_PASSPHRASE is not provided
-  staging/                     # temporary dumps, cleaned after each run
-backups/
-  <project-slug>/
-    repo/                      # encrypted Borg repository
-    ...
-```
-
-The dashboard's metadata lives in the `dashboard-db` Postgres container and is excluded from discovery with the `backup.ignore=true` label.
-
----
-
-## Restore
-
-Open a project → **Restore**:
-
-- Choose an archive; the newest archive is selected automatically.
-- The dump file is selected automatically from the archive by matching the project’s primary database (`pg_default_db`).
-- No target-database field: the target container is resolved automatically.
-- Without **Overwrite**, a new scratch database is created automatically, e.g. `restore_devhrmsdb_20261109123456`.
-- With **Overwrite**, the primary database is dropped and recreated inside the container, then restored in place. You must type `CONFIRM` to enable it.
-- Live phase progress and logs stream into the side panel.
-- The project container is re-resolved automatically before restore.
-
-Restores are non-destructive by default. Overwrite is the explicit destructive path.
-
----
-
-## Import / export
-
-| Operation | Format | Where |
-|---|---|---|
-| Catalog only | JSON | Import/Export → Catalog |
-| Single archive | `.tar` (`borg export-tar`) | Project → Import / export |
-| Single project repo | `.tar` of the encrypted repo | Project → Import / export |
-| Import archive/repo | `.tar` upload | Project → Import / export |
-| Import raw PostgreSQL dump | `.sql` / `.dump` / `.backup` / `.tar` | Project → Import / export → PostgreSQL dump file |
-| All repositories | `.tar` of `backups/` | Import/Export → All repositories |
-
-Open a project and use the **Import / export** tab to download its full repository or a specific archive, and to upload a new archive or replace the repository — all scoped to that project. Archive import uses `borg import-tar`. Full repository import replaces the target project's repo directory; the dashboard clears that project's Borg cache/security metadata so relocated repositories can be adopted safely. Repositories must use the same Borg passphrase.
-
-**Raw PostgreSQL dump import** stores the uploaded file as a new Borg archive and can immediately restore it into the project’s primary database. `.sql` files are applied with `psql`; custom `.dump`/`.backup` and `pg_dump` `.tar` files use `pg_restore`. Use a single-database `pg_dump` rather than `pg_dumpall`.
-
-An archive export is **the whole Borg archive**, not a single `pg_dump`: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per backed-up database. The default backup includes only the primary database, so most archives contain exactly one dump. If multiple databases were selected in project settings, the archive contains multiple dumps; restore still auto-selects the primary one.
-
-Imported archives are subject to the project's retention policy. Importing an archive with the same timestamp/day as an existing one can result in one being removed by the next `borg prune`; the catalog now reconciles automatically and removes rows for archives that no longer exist.
-
----
-
-## Configuration
-
-Admin users live in the metadata PostgreSQL database and are managed with the CLI, not environment variables. Global schedule, timezone, concurrency, retention, the notification webhook, and auto-add behavior are configured in the dashboard **Settings** page.
-
-### `.env` reference
-
-| Variable | Required | Purpose | Generate / set |
-|---|---|---|---|
-| `SESSION_SECRET` | Yes | Signs login JWT cookies | `openssl rand -hex 32` |
-| `DASHBOARD_DB_PASSWORD` | Yes | Password for the dashboard’s own Postgres | `openssl rand -hex 24` |
-| `BORG_PASSPHRASE` | Yes | Encrypts every Borg repository | `openssl rand -hex 32` |
-| `SECRETS_KEY` | Yes | Encrypts stored remote Docker TLS credentials | `openssl rand -hex 32` |
-| `COOKIE_SECURE` | No | Set `true` when serving the dashboard over HTTPS | `false` / `true` |
-| `DASHBOARD_PORT` | No | Host port published by Compose | `8095` or any free port |
-
-Generate a complete `.env`:
-
-```bash
 cat > .env <<EOF
 SESSION_SECRET=$(openssl rand -hex 32)
 DASHBOARD_DB_PASSWORD=$(openssl rand -hex 24)
@@ -285,171 +72,288 @@ SECRETS_KEY=$(openssl rand -hex 32)
 COOKIE_SECURE=false
 DASHBOARD_PORT=8095
 EOF
-
 chmod 600 .env
 ```
 
-### Optional overrides
+> [!IMPORTANT]
+> Store `BORG_PASSPHRASE` in a password manager now. Without it, your backups cannot be restored.
 
-| Variable | Default | Purpose | Set with |
-|---|---|---|---|
-| `APP_UID` / `APP_GID` | auto-detected | Runtime UID/GID | `id -u` / `id -g` |
-| `DOCKER_GID` | socket GID | Docker socket group | `stat -c '%g' /var/run/docker.sock` |
-| `PORT` | `8080` | Container HTTP port | any free container port |
-| `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path | custom socket path |
-| `LOG_LEVEL` | `info` | API log verbosity | `debug`, `info`, `warn`, `error` |
-| `DATABASE_URL` | Compose-built | External metadata database | `postgres://user:pass@host:5432/db` |
-| `DATA_DIR` | `/data` | Runtime state directory | set by Compose |
-| `BACKUP_ROOT` | `/backups` | Borg repository root | set by Compose |
-
-`APP_UID`, `APP_GID`, and `DOCKER_GID` are **not needed** normally. The entrypoint detects them from `./data` ownership and the mounted Docker socket. Override them only for rootless Docker, a custom socket, or unusual host ownership.
-
-### Secret handling
-
-- `.env` is gitignored. Keep it `chmod 600`.
-- **`BORG_PASSPHRASE` is unrecoverable if lost** — store it in a password manager or offline vault. Changing it does not re-encrypt existing repositories.
-- **`SECRETS_KEY`** must remain stable. Changing it invalidates stored remote Docker TLS certificates; re-enter them in **Servers**.
-- **`SESSION_SECRET`** rotation logs everyone out.
-- **`DASHBOARD_DB_PASSWORD`** must match the actual Postgres role. If you change it after the database volume exists, update the role inside `dashboard-db` as well.
-
----
-
-## Development
+**2. Start the stack**
 
 ```bash
-# Metadata database only
-docker compose up -d dashboard-db
-
-# Install dependencies
-npm install
-npm --prefix web install
-
-# Terminal 1: API on :8080
-DATABASE_URL=postgres://dashboard:<password>@localhost:5432/backup_dashboard \
-SESSION_SECRET=dev-secret \
-BORG_PASSPHRASE=dev-passphrase \
-npm run dev:server
-
-# Terminal 2: Vite on :5173 with /api proxy
-npm run dev:web
-
-# Terminal 3: create the admin user (schema is created by the API on startup)
-DATABASE_URL=postgres://dashboard:<password>@localhost:5432/backup_dashboard \
-npm run create-admin:dev
+mkdir -p data backups
+docker compose up -d --build
 ```
 
-Build everything:
-
-```bash
-npm run build
-```
-
-The API serves `web/dist` in production.
-
----
-
-## API overview
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/auth/login` | Sign in |
-| `GET` | `/api/health` | Docker/Borg/DB/disk health |
-| `GET` | `/api/stats` | Dashboard totals and chart data |
-| `GET` | `/api/discovery` | Detected Compose projects (optionally `?serverId=`) |
-| `GET` | `/api/containers` | Containers for manual add (optionally `?serverId=`) |
-| `GET/POST` | `/api/servers` | List / add Docker servers |
-| `PATCH/DELETE` | `/api/servers/:id` | Update / remove a Docker server |
-| `POST` | `/api/servers/test` | Test a connection before saving |
-| `POST` | `/api/servers/:id/test` | Test an existing server |
-| `POST` | `/api/servers/:id/scan` | Discover + auto-add projects on a server |
-| `GET/POST` | `/api/projects` | List / create projects (optionally `?serverId=`) |
-| `GET/PATCH/DELETE` | `/api/projects/:id` | Project details / update / remove |
-| `POST` | `/api/projects/:id/backup` | Queue a manual backup |
-| `POST` | `/api/backups` | Queue all enabled projects |
-| `GET` | `/api/projects/:id/archives` | Archive catalog |
-| `POST` | `/api/projects/:id/archives/:name/verify` | Verify archive |
-| `POST` | `/api/projects/:id/restore` | Restore a database |
-| `GET` | `/api/projects/:id/archives/:name/export` | Export archive tar |
-| `GET` | `/api/projects/:id/export` | Export repo tar |
-| `GET` | `/api/export/catalog` | Export catalog JSON |
-| `GET` | `/api/export/all` | Export all repos |
-| `POST` | `/api/import` | Import archive or repo tar |
-| `GET` | `/api/jobs` | Job history |
-| `GET` | `/api/jobs/:id` | Job + log tail |
-| `GET/PATCH` | `/api/settings` | Global defaults |
-
----
-
-## Operational notes
-
-- **Single scheduler instance.** The in-process queue assumes one dashboard replica. Scaling horizontally requires a shared queue/leader election.
-- **One container per project.** A project maps to one PostgreSQL container. Multiple databases inside it are supported.
-- **Logical dumps only.** Cross-database consistency is per-database; no WAL/PITR in v1.
-- **Passphrase safety.** Store `BORG_PASSPHRASE` securely. Without it, repositories cannot be restored. Use `borg key export` if you need a portable key backup.
-- **Docker socket risk.** A compromised dashboard can control the host. Keep it on a trusted network and use TLS.
-- **Disk space.** Backups are written to `./backups`; the app checks free space in health and staging is cleaned after each run.
-- **Stale locks.** If a job is interrupted, use `borg break-lock` on the affected repo (or stop/start the job) before retrying.
-
----
-
-## Troubleshooting
-
-**`No admin user configured` on the login page**
-Create one with:
+**3. Create the first admin**
 
 ```bash
 docker compose exec dashboard npm run create-admin
 ```
 
-If a user exists but you forgot the password:
+The command prompts for a username and a password of at least 8 characters. There are no default credentials.
+
+**4. Run your first backup**
+
+Open `http://<server>:8095` and sign in. Your PostgreSQL Compose projects are already listed under **Projects → Managed**. Open one and choose **Back up now**.
+
+Check health at any time:
 
 ```bash
-docker compose exec dashboard npm run reset-admin
+curl -s http://127.0.0.1:8095/api/health | jq
 ```
 
-**`permission denied` on `/var/run/docker.sock`**
-The entrypoint auto-detects the socket GID. If you use a custom Docker socket or rootless Docker, set `DOCKER_GID` explicitly and recreate the container.
+<p align="center">
+  <img alt="Project page for the storefront demo: container, Docker server, PostgreSQL 17.11, schedule, last backup, repository size, retention and live database sizes" src="assets/readme/screenshot-project.png" width="100%">
+</p>
 
-**`no such container` after recreating a Compose service**
-Container IDs change when a container is recreated; names and Compose labels stay stable. Backup and restore automatically re-resolve by container name, then compose project/service, and save the new ID. Open the project and use **Refresh container** to repair it manually; the restore error state also offers a refresh button.
+## Using it
 
-**`Archive ... does not exist` or an archive disappears after trim/prune**
-The archive catalog now reconciles with Borg automatically. If an imported archive was removed by retention, refresh the archive list from **Restore** or **Backups → Sync** and choose an existing archive. Imported archives use their original timestamps, so a duplicate/day collision can be pruned by the next backup. Do not include `.tar` in the imported archive name; the backend strips it.
+### Projects and discovery
 
-**`pg_dump: error: connection ... role ... does not exist`**
-Set the project's PostgreSQL user in Settings, or ensure `POSTGRES_USER` is present in the container.
+- New Compose projects are picked up on startup, every five minutes, and whenever you choose **Rescan**.
+- Opening **Managed** doesn't trigger a scan. Discovery runs on **Rescan** or when you open **Detected** or **Ignored**.
+- Compose projects without PostgreSQL are listed under **Detected → Other Compose projects**.
+- **Add project** onboards a container the scan missed, with live detection of its databases and user.
+- The trash button **moves a project to Ignored**. Its archives, jobs and Borg repo are kept, and later scans won't re-add it. Restore it from **Ignored**.
+- Turn off auto-add in **Settings → Global defaults**.
 
-**`Borg repository ... already exists` / lock errors**
-A previous run may still hold a lock. Check `docker compose logs dashboard`, then run `borg break-lock <repo>` in the container.
+Opt a container out of discovery with a label:
 
-**Restore fails with a missing member path**
-The restore form auto-selects the primary database dump from the archive. If the archive has no matching dump, refresh the archive list or verify the project’s primary database setting.
+```yaml
+labels:
+  backup.ignore: "true"   # or: backup.enable: "false"
+```
 
-**Dashboard can't reach Docker**
-Verify the runtime process ownership and group membership:
+If a container is recreated, its ID changes. Backups and restores re-resolve the container by name and Compose labels automatically, and **Refresh container** on the project page fixes it by hand.
+
+### Docker servers
+
+**Local Docker** is added automatically from `DOCKER_SOCKET`. Add remote hosts on the **Servers** page:
+
+- `http` on port 2375, or `https` on 2376 with an optional CA certificate, client certificate and key
+- Connections are tested before saving, and TLS material is encrypted at rest with `SECRETS_KEY`
+- **Scan now** discovers and auto-adds a server's PostgreSQL projects immediately
+- Removing a server deletes its project records after a second confirmation. Borg repositories stay on disk.
+
+### Restore
+
+Open a project and choose **Restore**:
+
+1. Pick an archive. The **Database dump** list is read from that archive's `databases/*.dump` files.
+2. Choose a **Target database**. The default is a new database named `restore_<db>_<date>`.
+3. Optionally enable **Overwrite**. This terminates connections and drops the target, and you have to type the target name to confirm.
+
+The dump is extracted from Borg and piped into `pg_restore` inside the container.
+
+### Import and export
+
+| Operation | Format | Where |
+|---|---|---|
+| Catalog only | JSON | Import / Export → Catalog |
+| Single archive | `.tar` (`borg export-tar`) | Project → Import / export |
+| Single project repository | `.tar` of the encrypted repo | Project → Import / export |
+| Import an archive or repository | `.tar` upload | Project → Import / export |
+| All repositories | `.tar` of `backups/` | Import / Export → All repositories |
+
+An archive is the whole Borg archive, not a single dump: it contains `globals.sql`, `manifest.json` and one `databases/<name>.dump` per database. Archives are imported with `borg import-tar`. Importing a full repository replaces the project's repo and clears its Borg cache so a relocated repo can be adopted. Repositories must use the same `BORG_PASSPHRASE`.
+
+Imported archives keep their original timestamps and are subject to retention. If an imported archive falls on the same day as an existing one, the next `borg prune` may remove one of them. The catalog reconciles with Borg automatically.
+
+## Configuration
+
+Schedules, timezone, concurrency, retention, the notification webhook and auto-add are set on the dashboard's **Settings** page. The `.env` file holds secrets and ports only.
+
+| Variable | Required | Purpose | Generate |
+|---|---|---|---|
+| `SESSION_SECRET` | Yes | Signs login cookies. Rotating it signs everyone out. | `openssl rand -hex 32` |
+| `DASHBOARD_DB_PASSWORD` | Yes | Password for the dashboard's own Postgres | `openssl rand -hex 24` |
+| `BORG_PASSPHRASE` | Yes | Encrypts every Borg repository. **Unrecoverable if lost.** | `openssl rand -hex 32` |
+| `SECRETS_KEY` | Yes | Encrypts stored remote Docker TLS credentials | `openssl rand -hex 32` |
+| `COOKIE_SECURE` | No | Set to `true` when serving over HTTPS | `false` / `true` |
+| `DASHBOARD_PORT` | No | Host port published by Compose | `8095` |
+
+<details>
+<summary><strong>Optional overrides</strong></summary>
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_UID` / `APP_GID` | auto-detected | Runtime UID/GID (`id -u` / `id -g`) |
+| `DOCKER_GID` | socket GID | Docker socket group (`stat -c '%g' /var/run/docker.sock`) |
+| `PORT` | `8080` | Container HTTP port |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `DATABASE_URL` | built by Compose | External metadata database |
+| `DATA_DIR` | `/data` | Runtime state directory |
+| `BACKUP_ROOT` | `/backups` | Borg repository root |
+
+The entrypoint starts as root only long enough to detect the owner of `./data` and the Docker socket group, fix ownership, and drop privileges. You only need `APP_UID`, `APP_GID` or `DOCKER_GID` for rootless Docker, a custom socket, or unusual host ownership.
+
+</details>
+
+<details>
+<summary><strong>Secret handling</strong></summary>
+
+- `.env` is gitignored. Keep it `chmod 600`.
+- Changing `BORG_PASSPHRASE` doesn't re-encrypt existing repositories. Use `borg key export` for a portable key backup.
+- `SECRETS_KEY` must stay stable. Changing it invalidates stored TLS certificates, and you'll have to re-enter them on the **Servers** page.
+- `DASHBOARD_DB_PASSWORD` must match the actual Postgres role. If you change it after the volume exists, update the role inside `dashboard-db` too.
+
+</details>
+
+<details>
+<summary><strong>Data layout</strong></summary>
+
+```text
+data/
+  logs/job-<id>.log
+  secrets/session.secret
+  secrets/borg.passphrase        # only when BORG_PASSPHRASE is not set
+  staging/                       # temporary dumps, cleaned after each run
+backups/
+  <project-slug>/repo/           # local server
+  servers/<server-slug>/<project-slug>/repo/   # remote servers
+```
+
+</details>
+
+## Security
+
+> [!WARNING]
+> The dashboard has root-equivalent control over every Docker host it connects to. Don't expose it to the public internet.
+
+- Keep it on a private network, a VPN, or behind a reverse proxy with authentication and TLS.
+- Docker port publishing bypasses `ufw`. Restrict port 8095 in your cloud firewall or security group as well.
+- Plain `http` Docker API access is unauthenticated. Prefer mutual TLS, or keep the API on a private network or WireGuard tunnel.
+- Admin passwords are bcrypt-hashed in the metadata database. Sessions use an httpOnly JWT cookie, and logins are rate limited and audit logged.
+
+## Limits
+
+- **One scheduler.** The in-process queue assumes a single dashboard replica.
+- **One container per project.** A project maps to one PostgreSQL container, which can hold many databases.
+- **Logical dumps only.** Consistency is per database, and there's no WAL or PITR.
+- **Local disk.** Repositories live in `./backups`. Free space is shown in the health panel.
+
+## Troubleshooting
+
+<details>
+<summary><code>No admin user configured</code> on the login page</summary>
+
+```bash
+docker compose exec dashboard npm run create-admin   # first user
+docker compose exec dashboard npm run reset-admin    # forgotten password
+```
+
+</details>
+
+<details>
+<summary><code>permission denied</code> on <code>/var/run/docker.sock</code></summary>
+
+The entrypoint detects the socket GID automatically. With a custom socket or rootless Docker, set `DOCKER_GID` and recreate the container. To check the runtime user:
 
 ```bash
 docker compose exec dashboard sh -c 'grep -E "^(Uid|Gid|Groups)" /proc/1/status'
 ```
 
-The process should run as the owner of `./data` and include the Docker socket GID. The entrypoint creates the runtime user and joins the Docker group automatically.
+</details>
 
-**Remote Docker server is offline**
-Check that the Docker Engine API is reachable from the dashboard container, the host/port are correct, and TLS certificates match. Plain `http` requires the API to be exposed on port 2375; `https` uses 2376. Use **Servers → Test** to inspect the exact error.
+<details>
+<summary><code>no such container</code> after recreating a Compose service</summary>
 
----
+Backup and restore re-resolve the container by name, then by Compose project and service. Choose **Refresh container** on the project page to repair it by hand.
 
-## Project structure
+</details>
 
+<details>
+<summary>An archive disappears after import or prune</summary>
+
+Retention may have pruned an imported archive that shared a day with another one. Refresh the archive list from **Restore** or **Backups → Sync** and choose an archive that still exists. Leave `.tar` out of imported archive names.
+
+</details>
+
+<details>
+<summary><code>role ... does not exist</code> from <code>pg_dump</code></summary>
+
+Set the project's PostgreSQL user in its settings, or make sure `POSTGRES_USER` is set on the container.
+
+</details>
+
+<details>
+<summary>Borg lock errors</summary>
+
+A previous run may still hold the lock. Check `docker compose logs dashboard`, then run `borg break-lock <repo>` inside the container.
+
+</details>
+
+<details>
+<summary>A remote Docker server shows as offline</summary>
+
+Check that the Docker Engine API is reachable from the dashboard container, that the host and port are right (2375 for `http`, 2376 for `https`), and that the TLS certificates match. **Servers → Test** shows the exact error.
+
+</details>
+
+## Development
+
+```bash
+docker compose up -d dashboard-db          # metadata database only
+npm install && npm --prefix web install
+
+# Terminal 1: API on :8080
+DATABASE_URL=postgres://dashboard:<password>@localhost:5432/backup_dashboard \
+SESSION_SECRET=dev-secret BORG_PASSPHRASE=dev-passphrase \
+npm run dev:server
+
+# Terminal 2: Vite on :5173, proxies /api
+npm run dev:web
+
+# Terminal 3: create an admin (the API creates the schema on startup)
+DATABASE_URL=postgres://dashboard:<password>@localhost:5432/backup_dashboard \
+npm run create-admin:dev
 ```
-src/                 Fastify API, Docker/Borg services, scheduler, job queue
+
+`npm run build` builds both apps, and the API serves `web/dist` in production. `npm run typecheck` checks both.
+
+```text
+src/                 Fastify API, Docker and Borg services, scheduler, job queue
 web/                 React 19 + Vite + Tailwind dashboard
-Dockerfile           Multi-stage build (React + TypeScript + Borg runtime)
+assets/readme/       README artwork (generate.py rebuilds the SVGs)
+Dockerfile           Multi-stage build: React, TypeScript and the Borg runtime
 docker-compose.yml   Dashboard + metadata Postgres
 ```
 
----
+<details>
+<summary><strong>API overview</strong></summary>
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/login` | Sign in |
+| `GET` | `/api/health` | Docker, Borg, database and disk health |
+| `GET` | `/api/stats` | Dashboard totals and chart data |
+| `GET` | `/api/discovery` | Detected Compose projects (`?serverId=`) |
+| `GET` | `/api/containers` | Containers for manual add (`?serverId=`) |
+| `GET/POST` | `/api/servers` | List or add Docker servers |
+| `PATCH/DELETE` | `/api/servers/:id` | Update or remove a Docker server |
+| `POST` | `/api/servers/test` | Test a connection before saving |
+| `POST` | `/api/servers/:id/test` | Test an existing server |
+| `POST` | `/api/servers/:id/scan` | Discover and auto-add projects on a server |
+| `GET/POST` | `/api/projects` | List or create projects (`?serverId=`) |
+| `GET/PATCH/DELETE` | `/api/projects/:id` | Project details, update, remove |
+| `POST` | `/api/projects/:id/backup` | Queue a manual backup |
+| `POST` | `/api/backups` | Queue all enabled projects |
+| `GET` | `/api/projects/:id/archives` | Archive catalog |
+| `POST` | `/api/projects/:id/archives/:name/verify` | Verify an archive (`borg check --verify-data`) |
+| `POST` | `/api/projects/:id/restore` | Restore a database |
+| `GET` | `/api/projects/:id/archives/:name/export` | Export an archive as tar |
+| `GET` | `/api/projects/:id/export` | Export a repository as tar |
+| `GET` | `/api/export/catalog` | Export the catalog as JSON |
+| `GET` | `/api/export/all` | Export all repositories |
+| `POST` | `/api/import` | Import an archive or repository tar |
+| `GET` | `/api/jobs` | Job history |
+| `GET` | `/api/jobs/:id` | Job details and log tail |
+| `GET/PATCH` | `/api/settings` | Global defaults |
+
+</details>
 
 ## License
 
-MIT
+[MIT](LICENSE) © notzeman

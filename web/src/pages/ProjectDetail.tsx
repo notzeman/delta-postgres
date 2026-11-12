@@ -60,7 +60,7 @@ function DetailStat({
 }) {
   return (
     <div className="rounded-xl border border-white/5 bg-ink-950/40 p-3">
-      <p className="text-[10px] uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
       <p className="mt-1 text-sm font-medium text-slate-200">{value}</p>
       {hint ? <p className="mt-0.5 text-[11px] text-slate-500">{hint}</p> : null}
     </div>
@@ -587,7 +587,7 @@ export default function ProjectDetail() {
               loading={backupNow.isPending}
               disabled={!project.enabled}
             >
-              <Play className="h-4 w-4" /> Backup now
+              <Play className="h-4 w-4" /> Back up now
             </Button>
           )}
           <a href={downloadUrl(`/projects/${project.id}/export`)} className="btn-secondary">
@@ -658,7 +658,7 @@ export default function ProjectDetail() {
               />
               <DetailStat
                 label="Schedule"
-                value={project.schedule_cron || "global"}
+                value={project.schedule_cron || "Global default"}
                 hint={`Next ${timeAgo(project.next_run_at)}`}
               />
               <DetailStat
@@ -673,7 +673,11 @@ export default function ProjectDetail() {
               />
               <DetailStat
                 label="Retention"
-                value={`${project.keep_daily ?? "global"}d / ${project.keep_weekly ?? "global"}w / ${project.keep_monthly ?? "global"}m`}
+                value={
+                  project.keep_daily == null && project.keep_weekly == null && project.keep_monthly == null
+                    ? "Global default"
+                    : `${project.keep_daily ?? "global"} / ${project.keep_weekly ?? "global"} / ${project.keep_monthly ?? "global"}`
+                }
                 hint="daily / weekly / monthly"
               />
             </div>
@@ -735,14 +739,14 @@ export default function ProjectDetail() {
               description="Run the first backup to create a Borg repository and archive."
               action={
                 <Button variant="primary" onClick={() => backupNow.mutate()} loading={backupNow.isPending}>
-                  <Play className="h-4 w-4" /> Backup now
+                  <Play className="h-4 w-4" /> Back up now
                 </Button>
               }
             />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
+                <thead className="border-b border-white/[0.07] text-left text-xs font-medium text-slate-500">
                   <tr>
                     <th className="px-5 py-3 font-medium">Archive</th>
                     <th className="px-3 py-3 font-medium">Created</th>
@@ -759,7 +763,7 @@ export default function ProjectDetail() {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2">
                           <FileArchive className="h-3.5 w-3.5 text-accent-400/70" />
-                          <span className="font-mono text-[11px] text-slate-200">{archive.name}</span>
+                          <span className="font-mono text-xs text-slate-200">{archive.name}</span>
                         </div>
                       </td>
                       <td className="px-3 py-3 text-slate-400">{fmtDate(archive.created_at)}</td>

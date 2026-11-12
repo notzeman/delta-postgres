@@ -24,6 +24,10 @@ export default {
           700: "rgb(var(--ink-700) / <alpha-value>)",
           600: "rgb(var(--ink-600) / <alpha-value>)",
         },
+        delta: {
+          400: "rgb(var(--delta-400) / <alpha-value>)",
+          500: "rgb(var(--delta-500) / <alpha-value>)",
+        },
         accent: {
           300: "rgb(var(--accent-300) / <alpha-value>)",
           400: "rgb(var(--accent-400) / <alpha-value>)",
@@ -32,11 +36,12 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["Space Grotesk Variable", "Space Grotesk", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 40px -10px rgba(45, 212, 191, 0.35)",
+        glow: "none",
+        pop: "0 12px 32px -12px rgb(0 0 0 / 0.45), 0 2px 6px -2px rgb(0 0 0 / 0.25)",
       },
     },
   },

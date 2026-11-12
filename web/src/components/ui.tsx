@@ -1,4 +1,5 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useId } from "react";
+import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
 import { Check, Loader2, X } from "lucide-react";
 import { useSnackbar } from "./Snackbar";
 
@@ -26,9 +27,9 @@ export function CardHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4">
-      <div>
-        <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+    <div className="flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
+      <div className="min-w-0">
+        <h3 className="text-[15px] font-semibold text-slate-100">{title}</h3>
         {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
       </div>
       {action}
@@ -116,7 +117,7 @@ export function StatusBadge({ status }: { status?: string | null }) {
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-400">
+    <div role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-slate-400">
       <Loader2 className="h-4 w-4 animate-spin" />
       {label || "Loading…"}
     </div>
@@ -159,42 +160,40 @@ export function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
-
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-8">
-      <div
-        className={cn(
-          "card my-auto w-full overflow-hidden",
-          wide ? "max-w-3xl" : "max-w-lg",
-        )}
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-slate-100">{title}</h2>
-            {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1 text-slate-400 transition hover:bg-white/5 hover:text-slate-200"
-            aria-label="Close"
+    <Dialog open={open} onClose={onClose} className="relative z-50">
+      <DialogBackdrop className="fixed inset-0 bg-black/60" />
+      <div className="fixed inset-0 overflow-y-auto">
+        <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-8">
+          <DialogPanel
+            className={cn(
+              "popover w-full overflow-hidden rounded-xl",
+              wide ? "max-w-3xl" : "max-w-lg",
+            )}
           >
-            <X className="h-5 w-5" />
-          </button>
+            <div className="flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
+              <div className="min-w-0">
+                <DialogTitle className="text-base font-semibold text-slate-100">{title}</DialogTitle>
+                {subtitle ? <p className="mt-0.5 text-[13px] text-slate-400">{subtitle}</p> : null}
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-ghost -mr-1 p-1.5"
+                aria-label="Close dialog"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-y-auto px-5 py-4">{children}</div>
+          </DialogPanel>
         </div>
-        <div className="max-h-[75vh] overflow-y-auto px-5 py-4">{children}</div>
       </div>
-    </div>
+    </Dialog>
   );
 }
+
+const LABELLABLE = new Set(["input", "textarea", "select"]);
 
 export function Field({
   label,
@@ -207,11 +206,25 @@ export function Field({
   children: React.ReactNode;
   className?: string;
 }) {
+  const generatedId = useId();
+  let controlId: string | undefined;
+  let control = children;
+  if (React.isValidElement<{ id?: string }>(children)) {
+    const type = children.type;
+    const labellable =
+      (typeof type === "string" && LABELLABLE.has(type)) || type === Input || type === Textarea;
+    if (labellable) {
+      controlId = children.props.id || generatedId;
+      control = children.props.id ? children : React.cloneElement(children, { id: controlId });
+    }
+  }
   return (
     <div className={className}>
-      <label className="label">{label}</label>
-      {children}
-      {hint ? <p className="mt-1 text-[11px] text-slate-500">{hint}</p> : null}
+      <label className="label" htmlFor={controlId}>
+        {label}
+      </label>
+      {control}
+      {hint ? <p className="mt-1.5 text-xs leading-relaxed text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -239,25 +252,41 @@ export function StatCard({
 }) {
   return (
     <div className="card p-5">
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</p>
+      <div className="flex items-center gap-2 text-[13px] font-medium text-slate-400">
         {icon ? (
-          <div
+          <span
             className={cn(
-              "rounded-lg border p-1.5",
-              tone === "accent"
-                ? "border-accent-500/20 bg-accent-500/10 text-accent-400"
-                : tone === "danger"
-                  ? "border-rose-500/20 bg-rose-500/10 text-rose-400"
-                  : "border-white/10 bg-white/5 text-slate-400",
+              tone === "accent" ? "text-accent-400" : tone === "danger" ? "text-rose-400" : "text-slate-500",
             )}
           >
             {icon}
-          </div>
+          </span>
         ) : null}
+        {label}
       </div>
-      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-100">{value}</p>
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-100">{value}</p>
       {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <div aria-hidden="true" className={cn("skeleton rounded-md", className)} />;
+}
+
+export function SkeletonRows({ rows = 4, label }: { rows?: number; label?: string }) {
+  return (
+    <div role="status" aria-live="polite" className="space-y-3 px-5 py-4">
+      <span className="sr-only">{label || "Loading"}</span>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="flex items-center gap-4">
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-3.5 w-2/5" />
+            <Skeleton className="h-3 w-3/5" />
+          </div>
+          <Skeleton className="h-7 w-16" />
+        </div>
+      ))}
     </div>
   );
 }
@@ -272,13 +301,19 @@ export function Tabs({
   onChange: (id: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-1 rounded-xl border border-white/5 bg-ink-900/60 p-1">
+    <div
+      role="tablist"
+      className="flex flex-wrap gap-1 rounded-lg border border-white/[0.07] bg-ink-900 p-1"
+    >
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={active === tab.id}
           onClick={() => onChange(tab.id)}
           className={cn(
-            "rounded-lg px-3 py-1.5 text-xs font-medium transition",
+            "rounded-md px-3 py-1.5 text-[13px] font-medium transition",
             active === tab.id
               ? "bg-accent-500/15 text-accent-300"
               : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
@@ -286,7 +321,7 @@ export function Tabs({
         >
           {tab.label}
           {typeof tab.count === "number" ? (
-            <span className="ml-1.5 text-[10px] text-slate-500">{tab.count}</span>
+            <span className="num ml-1.5 text-[11px] text-slate-500">{tab.count}</span>
           ) : null}
         </button>
       ))}
@@ -390,7 +425,7 @@ export function Switch({
         className={cn(
           "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40",
           checked
-            ? "border-accent-500 bg-accent-500 shadow-glow"
+            ? "border-accent-500 bg-accent-500"
             : "border-white/10 bg-white/5 group-hover:border-white/20",
         )}
       >

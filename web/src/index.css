@@ -2,51 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Delta ledger tokens.
+ * Dark ground is a blue-black derived from the Postgres elephant blue.
+ * "accent" = primary action blue. "delta" = changed / newly stored data only.
+ * In light mode the slate scale is inverted so text utilities keep working.
+ */
 :root,
 html.dark {
   color-scheme: dark;
   --white: 255 255 255;
-  --slate-50: 248 250 252;
-  --slate-100: 241 245 249;
-  --slate-200: 226 232 240;
-  --slate-300: 203 213 225;
-  --slate-400: 148 163 184;
-  --slate-500: 100 116 139;
-  --slate-600: 71 85 105;
-  --slate-700: 51 65 85;
-  --ink-950: 8 11 18;
-  --ink-900: 13 17 26;
-  --ink-850: 17 23 37;
-  --ink-800: 21 29 46;
-  --ink-700: 29 39 59;
-  --ink-600: 40 53 77;
-  --accent-300: 94 234 212;
-  --accent-400: 45 212 191;
-  --accent-500: 20 184 166;
-  --accent-600: 13 148 136;
+  --slate-50: 238 243 249;
+  --slate-100: 230 237 246;
+  --slate-200: 214 224 236;
+  --slate-300: 184 198 216;
+  --slate-400: 145 162 187;
+  --slate-500: 122 139 164;
+  --slate-600: 84 99 122;
+  --slate-700: 56 70 92;
+  --ink-950: 12 20 32;
+  --ink-900: 18 28 43;
+  --ink-850: 22 33 50;
+  --ink-800: 26 38 56;
+  --ink-700: 36 50 74;
+  --ink-600: 48 65 94;
+  --accent-300: 127 178 240;
+  --accent-400: 91 155 230;
+  --accent-500: 74 138 220;
+  --accent-600: 52 110 190;
+  --delta-400: 240 169 59;
+  --delta-500: 214 145 40;
 }
 
 html.light {
   color-scheme: light;
-  --white: 15 23 42;
-  --slate-50: 248 250 252;
-  --slate-100: 15 23 42;
-  --slate-200: 30 41 59;
-  --slate-300: 51 65 85;
-  --slate-400: 71 85 105;
-  --slate-500: 100 116 139;
-  --slate-600: 71 85 105;
-  --slate-700: 51 65 85;
-  --ink-950: 248 250 252;
+  --white: 18 32 51;
+  --slate-50: 18 32 51;
+  --slate-100: 18 32 51;
+  --slate-200: 30 45 66;
+  --slate-300: 52 68 92;
+  --slate-400: 78 94 118;
+  --slate-500: 96 111 134;
+  --slate-600: 120 134 155;
+  --slate-700: 150 162 180;
+  --ink-950: 244 246 249;
   --ink-900: 255 255 255;
   --ink-850: 248 250 252;
-  --ink-800: 241 245 249;
-  --ink-700: 226 232 240;
-  --ink-600: 203 213 225;
-  --accent-300: 15 118 110;
-  --accent-400: 13 148 136;
-  --accent-500: 13 148 136;
-  --accent-600: 17 94 89;
+  --ink-800: 238 242 247;
+  --ink-700: 217 224 234;
+  --ink-600: 196 206 220;
+  --accent-300: 30 86 164;
+  --accent-400: 37 99 184;
+  --accent-500: 37 99 184;
+  --accent-600: 25 75 145;
+  --delta-400: 176 104 0;
+  --delta-500: 150 88 0;
 }
 
 html,
@@ -56,32 +66,27 @@ body,
 }
 
 body {
-  @apply bg-ink-950 text-slate-200 antialiased;
-  background-image:
-    radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.09), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(99, 102, 241, 0.08), transparent 55%),
-    linear-gradient(180deg, #080b12 0%, #080b12 100%);
-  background-attachment: fixed;
+  @apply bg-ink-950 font-sans text-[14px] text-slate-200 antialiased;
+  font-feature-settings: "ss01", "tnum";
 }
 
-html.light body {
-  background-image:
-    radial-gradient(1200px 600px at 10% -10%, rgba(13, 148, 136, 0.10), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(99, 102, 241, 0.07), transparent 55%),
-    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
 }
 
 ::selection {
-  background: rgba(45, 212, 191, 0.28);
+  background: rgb(91 155 230 / 0.3);
 }
 
 html.light ::selection {
-  background: rgba(13, 148, 136, 0.22);
+  background: rgb(37 99 184 / 0.2);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #28354d transparent;
+  scrollbar-color: rgb(var(--ink-600)) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -90,16 +95,16 @@ html.light ::selection {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #28354d;
+  background: rgb(var(--ink-600));
   border-radius: 999px;
 }
 
 html.light * {
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: rgb(var(--ink-600)) transparent;
 }
 
 html.light *::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: rgb(var(--ink-600));
 }
 
 html.light .text-emerald-300 {
@@ -142,31 +147,31 @@ html.light .text-violet-300 {
 
 @layer components {
   .glass {
-    @apply border border-white/5 bg-ink-900/70 backdrop-blur-xl;
+    @apply border border-white/[0.07] bg-ink-900;
   }
 
   .hairline {
-    @apply border-b border-white/5;
+    @apply border-b border-white/[0.07];
   }
 
   .input {
-    @apply w-full rounded-lg border border-white/10 bg-ink-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-accent-500/60 focus:ring-2 focus:ring-accent-500/10;
+    @apply w-full rounded-md border border-white/10 bg-ink-950 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-accent-400/70 focus-visible:ring-2 focus-visible:ring-accent-400/30;
   }
 
   .label {
-    @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400;
+    @apply mb-1.5 block text-[13px] font-medium text-slate-300;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply btn bg-accent-500 text-ink-950 hover:bg-accent-400 shadow-glow;
+    @apply btn bg-accent-500 text-ink-950 hover:bg-accent-400;
   }
 
   .btn-secondary {
-    @apply btn border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10;
+    @apply btn border border-white/10 bg-white/[0.04] text-slate-200 hover:border-white/20 hover:bg-white/[0.08];
   }
 
   .btn-danger {
@@ -178,11 +183,19 @@ html.light .text-violet-300 {
   }
 
   .card {
-    @apply rounded-2xl border border-white/5 bg-ink-900/70 shadow-xl shadow-black/20 backdrop-blur-xl;
+    @apply rounded-xl border border-white/[0.07] bg-ink-900;
+  }
+
+  .popover {
+    @apply rounded-lg border border-white/10 bg-ink-900 shadow-pop;
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium;
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium;
+  }
+
+  .num {
+    @apply font-mono tabular-nums;
   }
 }
 
@@ -236,7 +249,7 @@ html.light .text-violet-300 {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, #151d2e 25%, #1d273b 37%, #151d2e 63%);
+  background: linear-gradient(90deg, rgb(var(--ink-800)) 25%, rgb(var(--ink-700)) 37%, rgb(var(--ink-800)) 63%);
   background-size: 200% 100%;
   animation: shimmer 1.4s ease infinite;
 }
@@ -244,4 +257,24 @@ html.light .text-violet-300 {
 html.light .skeleton {
   background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
   background-size: 200% 100%;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-400) / 0.7);
+  outline-offset: 2px;
+}
+
+.btn:focus-visible,
+.input:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

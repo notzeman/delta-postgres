@@ -34,6 +34,7 @@ import {
   Field,
   Input,
   Modal,
+  SkeletonRows,
   Spinner,
   StatusBadge,
   Tabs,
@@ -567,13 +568,10 @@ export default function Projects() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent-400/80">
-            Projects
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-100">
             Containers & schedules
           </h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
+          <p className="mt-1 max-w-2xl text-sm text-slate-400">
             Every Docker Compose project is scanned. PostgreSQL projects are added automatically;
             others are shown below for visibility. Remove a project to ignore it from future scans.
           </p>
@@ -628,7 +626,9 @@ export default function Projects() {
 
       {tab === "managed" ? (
         projectsQuery.isLoading ? (
-          <Spinner />
+          <Card>
+            <SkeletonRows rows={4} label="Loading projects" />
+          </Card>
         ) : managedProjects.length === 0 ? (
           <Card>
             <EmptyState
@@ -663,19 +663,19 @@ export default function Projects() {
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Repo size</p>
+                    <p className="text-xs font-medium text-slate-500">Repo size</p>
                     <p className="mt-0.5 text-slate-200">{formatBytes(project.repoBytes)}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Archives</p>
+                    <p className="text-xs font-medium text-slate-500">Archives</p>
                     <p className="mt-0.5 text-slate-200">{project.archiveCount ?? 0}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Last backup</p>
+                    <p className="text-xs font-medium text-slate-500">Last backup</p>
                     <p className="mt-0.5 text-slate-200">{timeAgo(project.last_backup_at)}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Next run</p>
+                    <p className="text-xs font-medium text-slate-500">Next run</p>
                     <p className="mt-0.5 text-slate-200">{timeAgo(project.next_run_at)}</p>
                   </div>
                 </div>
@@ -707,7 +707,7 @@ export default function Projects() {
                     loading={backupOne.isPending && backupOne.variables === project.id}
                     disabled={!project.enabled}
                   >
-                    <Play className="h-3.5 w-3.5" /> Backup now
+                    <Play className="h-3.5 w-3.5" /> Back up now
                   </Button>
                   <Link
                     to={`/projects/${project.id}`}

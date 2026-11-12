@@ -24,6 +24,7 @@ import {
   Field,
   Input,
   Modal,
+  SkeletonRows,
   Spinner,
   SuccessBox,
   Switch,
@@ -403,13 +404,10 @@ export default function Servers() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent-400/80">
-            Infrastructure
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-100">
             Docker servers
           </h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
+          <p className="mt-1 max-w-2xl text-sm text-slate-400">
             Scope projects to different Docker hosts. Connect remote engines over TCP or TLS; TLS
             credentials are encrypted at rest.
           </p>
@@ -428,7 +426,9 @@ export default function Servers() {
       {error ? <ErrorBox message={error} /> : null}
 
       {serversQuery.isLoading ? (
-        <Spinner label="Checking Docker servers…" />
+        <Card>
+          <SkeletonRows rows={3} label="Checking Docker servers" />
+        </Card>
       ) : servers.length === 0 ? (
         <Card>
           <EmptyState
@@ -481,19 +481,19 @@ export default function Servers() {
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Docker</p>
+                    <p className="text-xs font-medium text-slate-500">Docker</p>
                     <p className="mt-0.5 text-slate-200">{server.status?.version || "—"}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">API</p>
+                    <p className="text-xs font-medium text-slate-500">API</p>
                     <p className="mt-0.5 text-slate-200">{server.status?.apiVersion || "—"}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Projects</p>
+                    <p className="text-xs font-medium text-slate-500">Projects</p>
                     <p className="mt-0.5 text-slate-200">{server.projectCount ?? 0}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">TLS</p>
+                    <p className="text-xs font-medium text-slate-500">TLS</p>
                     <p className="mt-0.5 text-slate-200">
                       {server.protocol === "https"
                         ? server.hasCa || server.hasCert

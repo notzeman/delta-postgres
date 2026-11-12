@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 440" width="100%" role="img" aria-labelledby="t d">
+<title id="t">DeltaPostgres</title><desc id="d">Scheduled, encrypted, deduplicated backups for PostgreSQL containers. Each backup row shows a full dump; only the highlighted changed chunks are stored.</desc>
+<rect width="1200" height="440" rx="24" fill="#F4F6F9"/>
+<rect x="86" y="78" width="20" height="20" rx="4" fill="#B86E00"/>
+<rect x="72" y="106" width="20" height="20" rx="4" fill="#2563B8"/>
+<rect x="100" y="106" width="20" height="20" rx="4" fill="#2563B8" opacity="0.45"/>
+<text x="64" y="206" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="-2" fill="#122033">Delta<tspan fill="#4E5E76">Postgres</tspan></text>
+<text font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" fill="#4E5E76"><tspan x="64" y="256">Scheduled, encrypted, deduplicated backups</tspan><tspan x="64" y="290">for every PostgreSQL container on your</tspan><tspan x="64" y="324">Docker hosts.</tspan></text>
+<text x="64" y="384" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">pg_dump  →  borg  ·  zstd  ·  repokey-blake2</text>
+<text x="620" y="78" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#4E5E76">Each row is a full dump. Only changed chunks are stored.</text>
+<text x="620" y="130" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">Mon</text>
+<rect x="676" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="706" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="736" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="766" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="796" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="826" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="856" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="886" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="916" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="946" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="976" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1006" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1036" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1066" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1096" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1126" y="108" width="24" height="30" rx="5" fill="#B86E00"/>
+<text x="620" y="186" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">Tue</text>
+<rect x="676" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="706" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="736" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="766" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="796" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="826" y="164" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="856" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="886" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="916" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="946" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="976" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1006" y="164" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1036" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1066" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1096" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1126" y="164" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<text x="620" y="242" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">Wed</text>
+<rect x="676" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="706" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="736" y="220" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="766" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="796" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="826" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="856" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="886" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="916" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="946" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="976" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1006" y="220" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1036" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1066" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1096" y="220" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1126" y="220" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<text x="620" y="298" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">Thu</text>
+<rect x="676" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="706" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="736" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="766" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="796" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="826" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="856" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="886" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="916" y="276" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="946" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="976" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1006" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1036" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1066" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1096" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1126" y="276" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<text x="620" y="354" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">Fri</text>
+<rect x="676" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="706" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="736" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="766" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="796" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="826" y="332" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="856" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="886" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="916" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="946" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="976" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1006" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1036" y="332" width="24" height="30" rx="5" fill="#B86E00"/>
+<rect x="1066" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1096" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="1126" y="332" width="24" height="30" rx="5" fill="#C9D8EE"/>
+<rect x="676" y="402" width="16" height="16" rx="3" fill="#C9D8EE"/><text x="700" y="416" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#4E5E76">already in repo</text>
+<rect x="860" y="402" width="16" height="16" rx="3" fill="#B86E00"/><text x="884" y="416" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#4E5E76">stored as new data</text>
+</svg>

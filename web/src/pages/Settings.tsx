@@ -85,7 +85,7 @@ export default function Settings() {
     keepMonthly: "6",
     notificationWebhook: "",
     autoAddProjects: true,
-    timezone: "Asia/Kolkata",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     concurrency: "1",
   });
   const [savedForm, setSavedForm] = useState<typeof form | null>(null);
@@ -102,7 +102,7 @@ export default function Settings() {
       keepMonthly: String(settings.keepMonthly),
       notificationWebhook: settings.notificationWebhook || "",
       autoAddProjects: settings.autoAddProjects !== false,
-      timezone: settings.timezone || "Asia/Kolkata",
+      timezone: settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       concurrency: String(settings.concurrency || 1),
     };
     setForm(next);
@@ -147,11 +147,8 @@ export default function Settings() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-accent-400/80">
-          Configuration
-        </p>
-        <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">Settings</h2>
-        <p className="mt-1 max-w-2xl text-sm text-slate-500">
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-100">Settings</h2>
+        <p className="mt-1 max-w-2xl text-sm text-slate-400">
           Global schedule and retention defaults. Any project can override its own schedule and
           retention independently.
         </p>
@@ -334,7 +331,7 @@ export default function Settings() {
         />
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500">
+            <thead className="border-b border-white/[0.07] text-left text-xs font-medium text-slate-500">
               <tr>
                 <th className="px-5 py-3 font-medium">Time</th>
                 <th className="px-3 py-3 font-medium">Actor</th>
