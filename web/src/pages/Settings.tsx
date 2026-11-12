@@ -46,12 +46,16 @@ const FALLBACK_TIMEZONES = [
 ];
 
 const TIMEZONES: string[] = (() => {
+  let values: string[] = [];
   try {
-    const values = (Intl as any).supportedValuesOf?.("timeZone");
-    return Array.isArray(values) && values.length > 0 ? values : FALLBACK_TIMEZONES;
+    const supported = (Intl as any).supportedValuesOf?.("timeZone");
+    if (Array.isArray(supported)) values = supported;
   } catch {
-    return FALLBACK_TIMEZONES;
+    values = [];
   }
+  // Always include the curated fallbacks (e.g. Asia/Kolkata), even when the
+  // runtime reports it under a different name (Asia/Calcutta) or omits it.
+  return Array.from(new Set([...values, ...FALLBACK_TIMEZONES])).sort();
 })();
 
 export default function Settings() {

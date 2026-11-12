@@ -244,22 +244,13 @@ function ServerFormModal({
 
         {form.type === "ssh" ? (
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Server IP or hostname">
                 <Input
                   value={form.host}
                   onChange={(event) => setForm((f) => ({ ...f, host: event.target.value }))}
-                  placeholder="200.97.165.234"
+                  placeholder="123.45.67.890"
                   required
-                />
-              </Field>
-              <Field label="SSH port">
-                <Input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={form.port}
-                  onChange={(event) => setForm((f) => ({ ...f, port: event.target.value }))}
                 />
               </Field>
               <Field label="SSH username">
@@ -268,7 +259,7 @@ function ServerFormModal({
                   onChange={(event) =>
                     setForm((f) => ({ ...f, sshUsername: event.target.value }))
                   }
-                  placeholder="crono"
+                  placeholder="username"
                   autoComplete="username"
                   required
                 />
@@ -293,12 +284,6 @@ function ServerFormModal({
                 required={!editing}
               />
             </Field>
-            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
-              Connects over SSH and runs{" "}
-              <span className="font-mono">docker system dial-stdio</span>. The SSH user must be
-              allowed to use Docker, typically by membership in the{" "}
-              <span className="font-mono">docker</span> group.
-            </div>
           </div>
         ) : form.type === "tcp" ? (
           <>
@@ -575,21 +560,6 @@ export default function Servers() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-sm font-semibold text-slate-100">{server.name}</h3>
-                        <Badge
-                          tone={
-                            server.type === "local"
-                              ? "violet"
-                              : server.type === "ssh" || server.protocol === "ssh"
-                                ? "amber"
-                                : "blue"
-                          }
-                        >
-                          {server.type === "local"
-                            ? "local"
-                            : server.type === "ssh" || server.protocol === "ssh"
-                              ? "ssh"
-                              : "remote"}
-                        </Badge>
                         {!server.enabled ? <Badge tone="neutral">disabled</Badge> : null}
                       </div>
                       <p className="mt-0.5 font-mono text-[11px] text-slate-500">
@@ -639,7 +609,7 @@ export default function Servers() {
                     className="mt-3 truncate font-mono text-[11px] text-slate-500"
                     title={server.ssh_host_key}
                   >
-                    Host key: {server.ssh_host_key}
+                    Verification Run : {server.ssh_host_key}
                   </p>
                 ) : null}
 

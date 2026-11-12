@@ -15,10 +15,13 @@ import {
   Tabs,
 } from "../components/ui";
 import JobLogModal from "../components/JobLogModal";
+import Pagination from "../components/Pagination";
 import Tooltip from "../components/Tooltip";
 
 export default function Activity() {
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [logJob, setLogJob] = useState<number | null>(null);
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
@@ -34,6 +37,9 @@ export default function Activity() {
     failed: jobs.filter((job) => job.status === "failed").length,
   };
   const filtered = filter === "all" ? jobs : jobs.filter((job) => job.status === filter);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paged = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <div className="space-y-6">
@@ -59,7 +65,10 @@ export default function Activity() {
           { id: "failed", label: "Failed", count: counts.failed },
         ]}
         active={filter}
-        onChange={setFilter}
+        onChange={(next) => {
+          setFilter(next);
+          setPage(1);
+        }}
       />
 
       <Card>
@@ -81,6 +90,7 @@ export default function Activity() {
             description="Run a manual backup or wait for the scheduler."
           />
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-white/[0.07] text-left text-xs font-medium text-slate-500">
@@ -96,7 +106,7 @@ export default function Activity() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filtered.map((job) => (
+                {paged.map((job) => (
                   <tr key={job.id} className="hover:bg-white/[0.02]">
                     <td className="px-5 py-3 font-mono text-[11px] text-slate-400">#{job.id}</td>
                     <td className="px-3 py-3">
@@ -138,6 +148,18 @@ export default function Activity() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={safePage}
+            pageSize={pageSize}
+            total={filtered.length}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
+          </>
         )}
       </Card>
 

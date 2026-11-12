@@ -66,6 +66,58 @@ function DetailStat({
   );
 }
 
+const COMPRESSION_MECHANISMS = [
+  {
+    value: "auto,zstd",
+    label: "zstd · auto",
+    description: "Compress compressible chunks only · recommended",
+  },
+  {
+    value: "auto,lz4",
+    label: "lz4 · auto",
+    description: "Compress compressible chunks only · fastest",
+  },
+  { value: "zstd", label: "zstd", description: "Compress every chunk with zstd" },
+  { value: "lz4", label: "lz4", description: "Fastest compressor, larger archives" },
+  { value: "zlib", label: "zlib", description: "Older gzip-style compressor" },
+  { value: "lzma", label: "lzma", description: "Smallest archives, slowest" },
+  { value: "none", label: "none", description: "Store chunks uncompressed" },
+];
+
+function compressionSupportsLevel(mechanism: string): boolean {
+  return (
+    mechanism === "auto,zstd" ||
+    mechanism === "zstd" ||
+    mechanism === "zlib" ||
+    mechanism === "lzma"
+  );
+}
+
+function parseCompression(spec: string): { mechanism: string; level: string } {
+  const parts = (spec || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return { mechanism: "auto,zstd", level: "3" };
+  if (parts[0] === "auto" && parts.length > 1) {
+    const mechanism = `auto,${parts[1]}`;
+    return {
+      mechanism,
+      level: compressionSupportsLevel(mechanism) ? parts[2] || "3" : "",
+    };
+  }
+  const mechanism = parts[0];
+  return {
+    mechanism,
+    level: compressionSupportsLevel(mechanism) ? parts[1] || "3" : "",
+  };
+}
+
+function buildCompression(mechanism: string, level: string): string {
+  if (!compressionSupportsLevel(mechanism)) return mechanism;
+  return `${mechanism},${level || "3"}`;
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const projectId = Number(id);
@@ -104,6 +156,29 @@ export default function ProjectDetail() {
   });
 
   const [savedSettings, setSavedSettings] = useState<typeof form | null>(null);
+
+  const { mechanism: compressionMechanism, level: compressionLevel } = parseCompression(
+    form.compression,
+  );
+  const compressionLevelOptions = compressionSupportsLevel(compressionMechanism)
+    ? Array.from({ length: 9 }, (_, index) => String(index + 1))
+    : [];
+  if (compressionLevel && !compressionLevelOptions.includes(compressionLevel)) {
+    compressionLevelOptions.push(compressionLevel);
+    compressionLevelOptions.sort((a, b) => Number(a) - Number(b));
+  }
+  const compressionMechanismOptions = COMPRESSION_MECHANISMS.some(
+    (option) => option.value === compressionMechanism,
+  )
+    ? COMPRESSION_MECHANISMS
+    : [
+        ...COMPRESSION_MECHANISMS,
+        {
+          value: compressionMechanism,
+          label: compressionMechanism,
+          description: "Existing custom value",
+        },
+      ];
 
   useEffect(() => {
     if (!project) return;
@@ -819,12 +894,7 @@ export default function ProjectDetail() {
                   ariaLabel="Database to export"
                 />
               </Field>
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] text-slate-500">
-                  Downloads a <span className="font-mono">.dump</span> file (
-                  <span className="font-mono">pg_dump -Fc</span>). Restore it anywhere with{" "}
-                  <span className="font-mono">pg_restore</span>.
-                </p>
+              <div className="flex items-center justify-end gap-3">
                 <a
                   href={
                     exportDbValue
@@ -1247,13 +1317,47 @@ export default function ProjectDetail() {
                   />
                 </Field>
               </div>
-              <Field label="Compression" hint="Borg compression spec, e.g. auto,zstd,3">
-                <Input
-                  value={form.compression}
-                  onChange={(event) => setForm((f) => ({ ...f, compression: event.target.value }))}
-                  className="font-mono"
-                />
-              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Compression" hint="Borg compression mechanism">
+                  <Picker
+                    value={compressionMechanism}
+                    onChange={(next) =>
+                      setForm((f) => ({
+                        ...f,
+                        compression: buildCompression(next, compressionLevel),
+                      }))
+                    }
+                    options={compressionMechanismOptions}
+                    ariaLabel="Compression mechanism"
+                  />
+                </Field>
+                <Field
+                  label="Compression level"
+                  hint={
+                    compressionSupportsLevel(compressionMechanism)
+                      ? "Higher means smaller archives but more CPU"
+                      : "Not used by this mechanism"
+                  }
+                >
+                  <Picker
+                    value={compressionLevel}
+                    onChange={(next) =>
+                      setForm((f) => ({
+                        ...f,
+                        compression: buildCompression(compressionMechanism, next),
+                      }))
+                    }
+                    options={compressionLevelOptions.map((level) => ({
+                      value: level,
+                      label: `Level ${level}`,
+                      description: level === "3" ? "Default" : undefined,
+                    }))}
+                    disabled={!compressionSupportsLevel(compressionMechanism)}
+                    placeholder="—"
+                    ariaLabel="Compression level"
+                  />
+                </Field>
+              </div>
               <Field label="Notes">
                 <Textarea
                   rows={2}
