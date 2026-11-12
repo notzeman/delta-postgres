@@ -138,7 +138,6 @@ If a container is recreated, its ID changes. Backups and restores re-resolve the
   - The server's **SSH host key is pinned** on first connect (trust on first use) and shown on the server card. If the key ever changes, the connection is refused rather than sending the password to a possible impostor. After a legitimate reinstall, verify the new fingerprint (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the host) and use **Edit → Reset host key**. Changing the host or port resets it automatically.
 - **TCP / TLS** — `http` on port 2375, or `https` on 2376 with an optional CA certificate, client certificate and key.
 - Connections are tested before saving, and credentials are encrypted at rest with `SECRETS_KEY`
-- **Production server (backup-only)** — marks a server as read-only for DeltaPostgres: restores and "restore after import" into its databases are refused (in the UI and by the API). New remote servers default to this; turn it on for any existing production host.
 - Container lists and database sizes are cached per server (30 s / 2 min) and invalidated instantly by the Docker events stream, so dashboards that poll never hammer the remote host. **Rescan** always fetches live data.
 - **Scan now** discovers and auto-adds a server's PostgreSQL projects immediately
 - Removing a server deletes its project records after a second confirmation. Borg repositories stay on disk.

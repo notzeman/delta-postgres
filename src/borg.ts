@@ -412,10 +412,6 @@ export async function restoreDatabase(
   overwrite: boolean,
   log: LogFn,
 ): Promise<void> {
-  // Defense in depth: the route already refuses this for production servers.
-  if (server.production) {
-    throw new Error(`${server.name} is a production server; restore is disabled`);
-  }
   const container = await getContainer(containerId, server);
   if (container.state !== "running") {
     throw new Error(`Container ${container.name} is not running`);

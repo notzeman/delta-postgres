@@ -48,7 +48,6 @@ interface ServerForm {
   tlsKey: string;
   tlsVerify: boolean;
   enabled: boolean;
-  production: boolean;
   resetHostKey: boolean;
 }
 
@@ -66,8 +65,6 @@ const EMPTY_FORM: ServerForm = {
   tlsKey: "",
   tlsVerify: true,
   enabled: true,
-  // Remote servers default to backup-only; opt out explicitly for dev hosts.
-  production: true,
   resetHostKey: false,
 };
 
@@ -111,7 +108,6 @@ function ServerFormModal({
           tlsKey: "",
           tlsVerify: editing.tls_verify,
           enabled: editing.enabled,
-          production: editing.production,
           resetHostKey: false,
         }
       : EMPTY_FORM,
@@ -125,7 +121,6 @@ function ServerFormModal({
       name: form.name,
       type: form.type,
       enabled: form.enabled,
-      production: form.production,
     };
     if (opts.includeId && editing) base.id = editing.id;
     if (form.type === "ssh") {
@@ -401,13 +396,6 @@ function ServerFormModal({
           description="Include it in discovery, schedules, and backup operations."
         />
 
-        <Switch
-          checked={form.production}
-          onChange={(checked) => setForm((f) => ({ ...f, production: checked }))}
-          label="Production server (backup-only)"
-          description="Only read-only dumps are taken. Restoring archives into this server's databases is blocked."
-        />
-
         {editing && form.type === "ssh" && editing.ssh_host_key ? (
           <div className="rounded-xl border border-white/5 bg-ink-950/40 p-3">
             <p className="text-xs font-medium text-slate-400">Pinned SSH host key</p>
@@ -603,11 +591,6 @@ export default function Servers() {
                               : "remote"}
                         </Badge>
                         {!server.enabled ? <Badge tone="neutral">disabled</Badge> : null}
-                        {server.production ? (
-                          <Badge tone="amber">
-                            <ShieldCheck className="h-3 w-3" /> production
-                          </Badge>
-                        ) : null}
                       </div>
                       <p className="mt-0.5 font-mono text-[11px] text-slate-500">
                         {address(server)}

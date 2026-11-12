@@ -262,7 +262,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tlsKey: z.string().nullable().optional(),
       tlsVerify: z.boolean().optional(),
       enabled: z.boolean().optional(),
-      production: z.boolean().optional(),
       skipTest: z.boolean().optional(),
     });
     const parsed = schema.safeParse(request.body);
@@ -310,7 +309,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tls_key: body.tlsKey || null,
       tls_verify: body.tlsVerify !== false,
       enabled: body.enabled !== false,
-      production: body.production === true,
       ssh_host_key: null,
       created_at: "",
       updated_at: "",
@@ -333,8 +331,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const { rows } = await pool.query<ServerRow>(
       `INSERT INTO servers(name, slug, type, protocol, host, port, socket_path,
          ssh_username, ssh_password, tls_ca, tls_cert, tls_key, tls_verify, enabled,
-         production, ssh_host_key)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         ssh_host_key)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         temp.name,
@@ -351,7 +349,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         encryptSecret(temp.tls_key),
         temp.tls_verify,
         temp.enabled,
-        temp.production,
         // Pin the host key seen during the connection test (trust on first use).
         temp.type === "ssh" ? status?.hostKey || null : null,
       ],
@@ -359,7 +356,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     await audit(getActor(request), "server.create", slug, {
       type: temp.type,
       host: temp.host,
-      production: temp.production,
     });
     return reply.code(201).send({
       server: { ...toPublicServer(rows[0]), status: status || (await serverStatus(rows[0])) },
@@ -383,7 +379,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tlsKey: z.string().nullable().optional(),
       tlsVerify: z.boolean().optional(),
       enabled: z.boolean().optional(),
-      production: z.boolean().optional(),
       resetHostKey: z.boolean().optional(),
     });
     const parsed = schema.safeParse(request.body);
@@ -414,7 +409,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (body.tlsKey !== undefined) add("tls_key", body.tlsKey ? encryptSecret(body.tlsKey) : null);
     if (body.tlsVerify !== undefined) add("tls_verify", body.tlsVerify);
     if (body.enabled !== undefined) add("enabled", body.enabled);
-    if (body.production !== undefined) add("production", body.production);
     // A different host (or an explicit reset) needs a freshly trusted host key.
     const hostChanged =
       (body.host !== undefined && body.host !== server.host) ||
@@ -528,7 +522,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       tls_key: body.tlsKey || null,
       tls_verify: body.tlsVerify !== false,
       enabled: true,
-      production: false,
       ssh_host_key: null,
       created_at: "",
       updated_at: "",
@@ -1339,17 +1332,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
     const server = await getServer(project.server_id);
     if (!server) return sendError(reply, 404, "Docker server not found");
-    if (server.production) {
-      await audit(getActor(request), "archive.restore.blocked", `${project.slug}/${body.data.archive}`, {
-        server: server.name,
-      }).catch(() => {});
-      return sendError(
-        reply,
-        403,
-        `${server.name} is marked as a production server: restores into its databases are disabled. ` +
-          "Export the archive and restore it elsewhere, or turn off the production flag in server settings.",
-      );
-    }
 
     const lines: string[] = [];
     reply.hijack();
