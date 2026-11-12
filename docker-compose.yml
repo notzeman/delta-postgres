@@ -41,7 +41,7 @@ services:
       BACKUP_ROOT: /backups
       PORT: "8080"
     ports:
-      - "${DASHBOARD_PORT:-8095}:8080"
+      - "${DASHBOARD_BIND:-127.0.0.1}:${DASHBOARD_PORT:-8095}:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backups:/backups

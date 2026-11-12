@@ -70,6 +70,7 @@ DASHBOARD_DB_PASSWORD=$(openssl rand -hex 24)
 BORG_PASSPHRASE=$(openssl rand -hex 32)
 SECRETS_KEY=$(openssl rand -hex 32)
 COOKIE_SECURE=false
+DASHBOARD_BIND=127.0.0.1
 DASHBOARD_PORT=8095
 EOF
 chmod 600 .env
@@ -95,7 +96,7 @@ The command prompts for a username and a password of at least 8 characters. Ther
 
 **4. Run your first backup**
 
-Open `http://<server>:8095` and sign in. Your PostgreSQL Compose projects are already listed under **Projects → Managed**. Open one and choose **Back up now**.
+Open `https://<your-domain>` (or `http://127.0.0.1:8095` through an SSH tunnel) and sign in. The Compose port is bound to loopback by default; put a reverse proxy in front of it for remote access. Your PostgreSQL Compose projects are already listed under **Projects → Managed**. Open one and choose **Back up now**.
 
 Check health at any time:
 
@@ -172,6 +173,7 @@ Schedules, timezone, concurrency, retention, the notification webhook and auto-a
 | `BORG_PASSPHRASE` | Yes | Encrypts every Borg repository. **Unrecoverable if lost.** | `openssl rand -hex 32` |
 | `SECRETS_KEY` | Yes | Encrypts stored remote Docker SSH passwords and TLS credentials | `openssl rand -hex 32` |
 | `COOKIE_SECURE` | No | Set to `true` when serving over HTTPS | `false` / `true` |
+| `DASHBOARD_BIND` | No | Host interface the port is published on | `127.0.0.1` |
 | `DASHBOARD_PORT` | No | Host port published by Compose | `8095` |
 
 <details>
@@ -224,7 +226,7 @@ backups/
 > The dashboard has root-equivalent control over every Docker host it connects to. Don't expose it to the public internet.
 
 - Keep it on a private network, a VPN, or behind a reverse proxy with authentication and TLS.
-- Docker port publishing bypasses `ufw`. Restrict port 8095 in your cloud firewall or security group as well.
+- The dashboard port is bound to `127.0.0.1` by default, so it is not reachable over the public IP. Use a reverse proxy or an SSH tunnel. If you change `DASHBOARD_BIND` to `0.0.0.0`, restrict the port in your cloud firewall or security group too, since Docker port publishing bypasses `ufw`.
 - Plain `http` Docker API access is unauthenticated. Prefer mutual TLS, or keep the API on a private network or WireGuard tunnel.
 - Admin passwords are bcrypt-hashed in the metadata database. Sessions use an httpOnly JWT cookie, and logins are rate limited and audit logged.
 
