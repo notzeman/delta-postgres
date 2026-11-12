@@ -8,7 +8,6 @@ import {
   Database,
   Download,
   FileArchive,
-  HardDrive,
   Play,
   RefreshCw,
   RotateCcw,
@@ -235,8 +234,10 @@ export default function ProjectDetail() {
   const [restore, setRestore] = useState({
     archive: "",
     overwrite: false,
-    confirm: "",
   });
+  // Every restore goes through a warning modal that requires typing CONFIRM.
+  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
+  const [restoreConfirm, setRestoreConfirm] = useState("");
   const [restoreNonce, setRestoreNonce] = useState(() => Date.now());
   const [restoreOutput, setRestoreOutput] = useState("");
   const [restoreError, setRestoreError] = useState("");
@@ -246,18 +247,14 @@ export default function ProjectDetail() {
     label: "Ready to restore",
     done: false,
   });
-  const [exportArchive, setExportArchive] = useState("");
-  const [transferMode, setTransferMode] = useState("archive");
+  const [exportDb, setExportDb] = useState("");
   const [transferArchive, setTransferArchive] = useState(
     `imported-${new Date().toISOString().replace(/[:.]/g, "-")}`,
   );
   const [transferFile, setTransferFile] = useState<File | null>(null);
   const [transferDrag, setTransferDrag] = useState(false);
-  const [transferResult, setTransferResult] = useState("");
   const [transferError, setTransferError] = useState("");
-  const [importRestoreNow, setImportRestoreNow] = useState(true);
-  const [importOverwrite, setImportOverwrite] = useState(false);
-  const [importConfirm, setImportConfirm] = useState("");
+  const [importedArchive, setImportedArchive] = useState("");
   const [archiveToDelete, setArchiveToDelete] = useState<string | null>(null);
   const [confirmIgnore, setConfirmIgnore] = useState(false);
 
@@ -276,6 +273,11 @@ export default function ProjectDetail() {
     container?.databases?.find((db) => db.name !== "postgres")?.name ||
     "";
   const safePrimary = (primaryDb || "database").replace(/[^a-zA-Z0-9_]/g, "_");
+  const exportDatabases = (container?.databases || []).filter((db) => db.name !== "postgres");
+  const exportDbValue =
+    exportDb && exportDatabases.some((db) => db.name === exportDb)
+      ? exportDb
+      : exportDatabases.find((db) => db.name === primaryDb)?.name || exportDatabases[0]?.name || "";
   const selectedDump =
     archiveDatabases?.find((db) => db.name === primaryDb) ||
     archiveDatabases?.find((db) => db.name !== "postgres") ||
@@ -294,6 +296,7 @@ export default function ProjectDetail() {
     memberPath: string;
     targetDatabase: string;
     overwrite: boolean;
+    confirm: string;
   }) => {
     setRestoreOutput("");
     setRestoreError("");
@@ -411,34 +414,9 @@ export default function ProjectDetail() {
       memberPath: selectedDump.path,
       targetDatabase: targetDb,
       overwrite: restore.overwrite,
+      confirm: restoreConfirm,
     });
   };
-
-  const importMutation = useMutation({
-    mutationFn: async () => {
-      if (!transferFile) throw new Error("Choose a .tar file first");
-      const form = new FormData();
-      form.append("projectId", String(projectId));
-      form.append("mode", transferMode);
-      if (transferMode === "archive") form.append("archiveName", transferArchive);
-      form.append("file", transferFile);
-      return api<{ ok: boolean; output: string }>("/import", {
-        method: "POST",
-        body: form,
-      });
-    },
-    onSuccess: (data) => {
-      setTransferResult(data.output || "Import completed successfully.");
-      setTransferError("");
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["stats"] });
-    },
-    onError: (err) => {
-      setTransferResult("");
-      setTransferError(err instanceof Error ? err.message : "Import failed");
-    },
-  });
 
   const importDump = useMutation({
     mutationFn: async () => {
@@ -463,37 +441,17 @@ export default function ProjectDetail() {
     },
     onSuccess: async (data) => {
       setTransferError("");
-      setTransferResult(`Dump stored as "${data.archive.name}".`);
+      setTransferFile(null);
+      setImportedArchive(data.archive.name);
+      setTransferArchive(`imported-${new Date().toISOString().replace(/[:.]/g, "-")}`);
       await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       queryClient.invalidateQueries({ queryKey: ["archive-databases", projectId] });
-      snackbar.success(`Dump stored as Borg archive "${data.archive.name}".`);
-
-      if (importRestoreNow && !server?.production) {
-        const target = importOverwrite
-          ? primaryDb || data.archive.database
-          : `restore_${(primaryDb || data.archive.database).replace(
-              /[^a-zA-Z0-9_]/g,
-              "_",
-            )}_${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
-        setRestore({
-          archive: data.archive.name,
-          overwrite: importOverwrite,
-          confirm: importOverwrite ? "CONFIRM" : "",
-        });
-        setTab("restore");
-        await streamRestore({
-          archive: data.archive.name,
-          database: data.archive.database,
-          memberPath: data.archive.memberPath,
-          targetDatabase: target,
-          overwrite: importOverwrite,
-        });
-      }
+      snackbar.success(`Dump added to backups as "${data.archive.name}".`);
     },
     onError: (err) => {
-      setTransferResult("");
+      setImportedArchive("");
       setTransferError(err instanceof Error ? err.message : "Dump import failed");
     },
   });
@@ -522,7 +480,6 @@ export default function ProjectDetail() {
   });
 
   useEffect(() => {
-    if (!exportArchive && archives[0]) setExportArchive(archives[0].name);
     if (archives.length === 0) return;
     setRestore((current) => {
       if (archives.some((archive) => archive.name === current.archive)) return current;
@@ -531,7 +488,7 @@ export default function ProjectDetail() {
         archive: archives[0].name,
       };
     });
-  }, [archives, exportArchive]);
+  }, [archives]);
 
   if (projectQuery.isLoading) return <Spinner label="Loading project…" />;
   if (!project) {
@@ -590,11 +547,8 @@ export default function ProjectDetail() {
               <Play className="h-4 w-4" /> Back up now
             </Button>
           )}
-          <a href={downloadUrl(`/projects/${project.id}/export`)} className="btn-secondary">
-            <Download className="h-4 w-4" /> Export repo
-          </a>
           <Button onClick={() => setTab("transfer")}>
-            <UploadCloud className="h-4 w-4" /> Import backup
+            <Download className="h-4 w-4" /> Export / import dump
           </Button>
           <Button onClick={() => setTab("settings")}>
             <SlidersHorizontal className="h-4 w-4" /> Settings
@@ -840,147 +794,72 @@ export default function ProjectDetail() {
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>
             <CardHeader
-              title="Export project data"
-              subtitle="Download encrypted Borg data tied to this project"
+              title="Export database"
+              subtitle="Take a fresh pg_dump now and download it"
               action={<Download className="h-4 w-4 text-slate-500" />}
             />
             <div className="space-y-4 p-5">
-              <div className="rounded-xl border border-white/5 bg-ink-950/40 p-4">
-                <div className="flex items-start gap-3">
-                  <div className="rounded-xl border border-accent-500/20 bg-accent-500/10 p-2 text-accent-400">
-                    <HardDrive className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-slate-200">Full project repository</p>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Every archive in this project&apos;s Borg repo, including encryption metadata.
-                    </p>
-                    <a
-                      href={downloadUrl(`/projects/${project.id}/export`)}
-                      className="btn-secondary mt-3 text-xs"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Download repo tar
-                    </a>
-                  </div>
-                </div>
+              <Field
+                label="Database"
+                hint="Dumped live from the running container in a read-only session."
+              >
+                <Picker
+                  value={exportDbValue}
+                  onChange={setExportDb}
+                  options={exportDatabases.map((db) => ({
+                    value: db.name,
+                    label: db.name,
+                    description: formatBytes(db.sizeBytes),
+                    icon: <Database className="h-4 w-4" />,
+                  }))}
+                  placeholder={
+                    container?.state === "running" ? "Select a database…" : "Container is not running"
+                  }
+                  disabled={container?.state !== "running" || exportDatabases.length === 0}
+                  ariaLabel="Database to export"
+                />
+              </Field>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] text-slate-500">
+                  Downloads a <span className="font-mono">.dump</span> file (
+                  <span className="font-mono">pg_dump -Fc</span>). Restore it anywhere with{" "}
+                  <span className="font-mono">pg_restore</span>.
+                </p>
+                <a
+                  href={
+                    exportDbValue
+                      ? downloadUrl(
+                          `/projects/${project.id}/dump?database=${encodeURIComponent(exportDbValue)}`,
+                        )
+                      : "#"
+                  }
+                  className={cn(
+                    "btn-primary shrink-0 text-xs",
+                    (!exportDbValue || container?.state !== "running") &&
+                      "pointer-events-none opacity-50",
+                  )}
+                >
+                  <Download className="h-3.5 w-3.5" /> Download dump
+                </a>
               </div>
-
-              <div className="rounded-xl border border-white/5 bg-ink-950/40 p-4">
-                <div className="flex items-start gap-3">
-                  <div className="rounded-xl border border-accent-500/20 bg-accent-500/10 p-2 text-accent-400">
-                    <FileArchive className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-slate-200">Single archive</p>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      A portable tar made with <span className="font-mono">borg export-tar</span>.
-                    </p>
-                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <Picker
-                        value={exportArchive}
-                        onChange={setExportArchive}
-                        options={archives.map((archive) => ({
-                          value: archive.name,
-                          label: archive.name,
-                          description: `${fmtDate(archive.created_at)} · ${formatBytes(archive.original_size)}`,
-                          icon: <FileArchive className="h-4 w-4" />,
-                        }))}
-                        placeholder="Select an archive…"
-                        searchable
-                        ariaLabel="Archive to export"
-                        className="flex-1"
-                      />
-                      <a
-                        href={
-                          exportArchive
-                            ? downloadUrl(
-                                `/projects/${project.id}/archives/${encodeURIComponent(exportArchive)}/export`,
-                              )
-                            : "#"
-                        }
-                        className={cn(
-                          "btn-secondary text-xs",
-                          !exportArchive && "pointer-events-none opacity-50",
-                        )}
-                      >
-                        <Download className="h-3.5 w-3.5" /> Export archive
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-[11px] text-slate-500">
-                Repository exports remain encrypted. To restore them on another instance, use the
-                same <span className="font-mono text-slate-400">BORG_PASSPHRASE</span>.
-              </p>
             </div>
           </Card>
 
           <Card>
             <CardHeader
-              title="Import into this project"
-              subtitle="Upload a Borg archive, full repository, or raw PostgreSQL dump"
+              title="Import a dump"
+              subtitle="Add a PostgreSQL dump to this project's backups"
               action={<UploadCloud className="h-4 w-4 text-slate-500" />}
             />
             <form
               className="space-y-4 p-5"
               onSubmit={(event) => {
                 event.preventDefault();
-                setTransferResult("");
+                setImportedArchive("");
                 setTransferError("");
-                if (transferMode === "dump") importDump.mutate();
-                else importMutation.mutate();
+                importDump.mutate();
               }}
             >
-              <Field label="Import mode">
-                <Picker
-                  value={transferMode}
-                  onChange={setTransferMode}
-                  options={[
-                    {
-                      value: "archive",
-                      label: "Borg archive",
-                      description: "Add one exported archive with borg import-tar",
-                    },
-                    {
-                      value: "repo",
-                      label: "Full repository",
-                      description: "Replace this project's Borg repository",
-                    },
-                    {
-                      value: "dump",
-                      label: "PostgreSQL dump file",
-                      description: "Store .sql/.dump/.backup/.tar in Borg and optionally restore it",
-                    },
-                  ]}
-                  ariaLabel="Import mode"
-                />
-              </Field>
-
-              {transferMode === "archive" || transferMode === "dump" ? (
-                <Field
-                  label="Archive name"
-                  hint={
-                    transferMode === "dump"
-                      ? "Optional. Borg archive name for the imported dump."
-                      : "Borg archive name inside this project. Do not include .tar; the backend strips it."
-                  }
-                >
-                  <Input
-                    value={transferArchive}
-                    onChange={(event) => setTransferArchive(event.target.value)}
-                    className="font-mono"
-                    required={transferMode === "archive"}
-                  />
-                </Field>
-              ) : (
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-                  Full repository import replaces the current Borg repository for this project. The
-                  upload must have been encrypted with the same passphrase.
-                </div>
-              )}
-
               <label
                 onDragOver={(event) => {
                   event.preventDefault();
@@ -1004,128 +883,58 @@ export default function ProjectDetail() {
                   <UploadCloud className="h-5 w-5" />
                 </div>
                 <p className="text-xs font-medium text-slate-200">
-                  {transferFile
-                    ? transferFile.name
-                    : transferMode === "dump"
-                      ? "Drop a .sql, .dump, .backup, or .tar file here"
-                      : "Drop a .tar file here or click to browse"}
+                  {transferFile ? transferFile.name : "Drop a .dump, .backup, .sql, or .tar file here"}
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  {transferFile
-                    ? formatBytes(transferFile.size)
-                    : transferMode === "dump"
-                      ? "PostgreSQL dump · up to 50 GB"
-                      : "Archive tar or full repository tar · up to 50 GB"}
+                  {transferFile ? formatBytes(transferFile.size) : "Single-database pg_dump · up to 50 GB"}
                 </p>
                 <input
                   type="file"
                   className="sr-only"
-                  accept={
-                    transferMode === "dump"
-                      ? ".sql,.dump,.backup,.tar,application/sql,application/octet-stream"
-                      : ".tar,.tgz,.gz,application/x-tar"
-                  }
+                  accept=".sql,.dump,.backup,.tar,application/sql,application/octet-stream"
                   onChange={(event) => setTransferFile(event.target.files?.[0] || null)}
                 />
               </label>
 
-              {transferMode === "dump" ? (
-                <>
-                  <p className="text-[11px] text-slate-500">
-                    Use a single-database <span className="font-mono">pg_dump</span> file
-                    (.sql / .dump / .backup / .tar). <span className="font-mono">pg_dumpall</span>{
-                      " "
-                    }
-                    cluster archives are not supported.
-                  </p>
-                  <div className="rounded-xl border border-white/5 bg-ink-950/40 p-3">
-                    <Switch
-                      checked={importRestoreNow && !server?.production}
-                      onChange={setImportRestoreNow}
-                      disabled={Boolean(server?.production)}
-                      label="Restore after import"
-                      description={
-                        server?.production
-                          ? "Disabled: this project runs on a production (backup-only) server."
-                          : "Store the dump in Borg, then immediately restore it into this project."
-                      }
-                    />
-                  </div>
-                  {importRestoreNow && !server?.production ? (
-                    <>
-                      <div className="rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Target container</span>
-                          <span className="truncate font-mono text-slate-200">
-                            {container?.name || project.container_name || "—"}
-                          </span>
-                        </div>
-                        <div className="mt-1 flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Target database</span>
-                          <span className="truncate font-mono text-slate-200">
-                            {importOverwrite
-                              ? primaryDb || "project primary database"
-                              : "new scratch database"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                        <Checkbox
-                          tone="warning"
-                          checked={importOverwrite}
-                          onChange={(checked) => {
-                            setImportOverwrite(checked);
-                            setImportConfirm("");
-                          }}
-                          label="Overwrite the primary database"
-                          description={
-                            importOverwrite
-                              ? "The primary database will be dropped and recreated before restoring."
-                              : "Leave disabled to restore into a new scratch database."
-                          }
-                        />
-                      </div>
-                      {importOverwrite ? (
-                        <Field label="Type CONFIRM to wipe the primary database">
-                          <Input
-                            value={importConfirm}
-                            onChange={(event) => setImportConfirm(event.target.value)}
-                            placeholder="CONFIRM"
-                            className="font-mono"
-                          />
-                        </Field>
-                      ) : null}
-                    </>
-                  ) : null}
-                </>
-              ) : null}
+              <Field label="Backup name" hint="Shown in the Backups list.">
+                <Input
+                  value={transferArchive}
+                  onChange={(event) => setTransferArchive(event.target.value)}
+                  className="font-mono"
+                />
+              </Field>
 
               {transferError ? <ErrorBox message={transferError} /> : null}
-              {transferResult && (transferMode !== "dump" || !importRestoreNow) ? (
-                <div className="max-h-32 overflow-auto rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 font-mono text-[11px] text-emerald-300">
-                  {transferResult}
+              {importedArchive ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-300">
+                  <span className="truncate">
+                    Added to backups as <span className="font-mono">{importedArchive}</span>.
+                  </span>
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={() => {
+                      setRestore({ archive: importedArchive, overwrite: false });
+                      setTab("restore");
+                    }}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Restore it
+                  </Button>
                 </div>
               ) : null}
 
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[11px] text-slate-500">
-                  Imported data stays inside this project&apos;s scope.
+                  The dump is only stored as a backup. Nothing is restored until you do it from the
+                  Restore tab.
                 </p>
                 <Button
                   type="submit"
                   variant="primary"
-                  loading={importMutation.isPending || importDump.isPending}
-                  disabled={
-                    !transferFile ||
-                    (transferMode === "archive" && !transferArchive.trim()) ||
-                    (transferMode === "dump" &&
-                      importRestoreNow &&
-                      importOverwrite &&
-                      importConfirm !== "CONFIRM")
-                  }
+                  loading={importDump.isPending}
+                  disabled={!transferFile}
                 >
-                  <UploadCloud className="h-4 w-4" />{" "}
-                  {transferMode === "dump" ? "Import dump" : "Import backup"}
+                  <UploadCloud className="h-4 w-4" /> Import dump
                 </Button>
               </div>
             </form>
@@ -1163,7 +972,8 @@ export default function ProjectDetail() {
               className="space-y-4 p-5"
               onSubmit={(event) => {
                 event.preventDefault();
-                void runRestore();
+                setRestoreConfirm("");
+                setRestoreModalOpen(true);
               }}
             >
               <Field label="Archive">
@@ -1171,7 +981,7 @@ export default function ProjectDetail() {
                   <Picker
                     value={restore.archive}
                     onChange={(next) => {
-                      setRestore({ archive: next, overwrite: false, confirm: "" });
+                      setRestore({ archive: next, overwrite: false });
                       setRestoreOutput("");
                       setRestoreError("");
                       setRestoreProgress({
@@ -1271,11 +1081,7 @@ export default function ProjectDetail() {
                   checked={restore.overwrite}
                   disabled={restoreProgress.running}
                   onChange={(checked) =>
-                    setRestore((current) => ({
-                      ...current,
-                      overwrite: checked,
-                      confirm: "",
-                    }))
+                    setRestore((current) => ({ ...current, overwrite: checked }))
                   }
                   label="Overwrite the existing database"
                   description={
@@ -1285,22 +1091,6 @@ export default function ProjectDetail() {
                   }
                 />
               </div>
-              {restore.overwrite ? (
-                <Field
-                  label="Type CONFIRM to wipe the existing database"
-                  hint="This permanently replaces the current database contents."
-                >
-                  <Input
-                    value={restore.confirm}
-                    onChange={(event) =>
-                      setRestore((current) => ({ ...current, confirm: event.target.value }))
-                    }
-                    placeholder="CONFIRM"
-                    className="font-mono"
-                    disabled={restoreProgress.running}
-                  />
-                </Field>
-              ) : null}
               {restoreError ? (
                 <div className="space-y-2">
                   <ErrorBox message={restoreError} />
@@ -1327,8 +1117,7 @@ export default function ProjectDetail() {
                     restoreProgress.running ||
                     !restore.archive ||
                     !selectedDump ||
-                    !targetDb ||
-                    (restore.overwrite && restore.confirm !== "CONFIRM")
+                    !targetDb
                   }
                 >
                   <UploadCloud className="h-4 w-4" /> Restore
@@ -1577,6 +1366,57 @@ export default function ProjectDetail() {
           setSavedSettings(form);
         }}
       />
+
+      <ConfirmModal
+        open={restoreModalOpen}
+        onClose={() => setRestoreModalOpen(false)}
+        onConfirm={() => {
+          setRestoreModalOpen(false);
+          void runRestore();
+        }}
+        title={restore.overwrite ? "Overwrite database?" : "Restore into a new database?"}
+        description={`${server?.name || "server"} · ${container?.name || project.container_name || "container"}`}
+        confirmLabel={restore.overwrite ? "Overwrite and restore" : "Restore"}
+        confirmDisabled={restoreConfirm !== "CONFIRM"}
+      >
+        <div className="space-y-3">
+          <p>
+            {restore.overwrite ? (
+              <>
+                <strong className="text-rose-300">
+                  The database <span className="font-mono">{targetDb}</span> will be dropped and
+                  replaced
+                </strong>{" "}
+                with the contents of this backup. Connected clients are disconnected and all current
+                data in it is lost.
+              </>
+            ) : (
+              <>
+                A new database <span className="font-mono">{targetDb}</span> will be created on this
+                server and the backup restored into it. Existing databases are not changed, but the
+                restore uses the server&apos;s disk, CPU and I/O while it runs.
+              </>
+            )}
+          </p>
+          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+            <dt className="text-slate-500">Backup</dt>
+            <dd className="truncate text-slate-200">{restore.archive}</dd>
+            <dt className="text-slate-500">Dump</dt>
+            <dd className="truncate text-slate-200">{selectedDump?.path || "—"}</dd>
+            <dt className="text-slate-500">Target</dt>
+            <dd className="truncate text-slate-200">{targetDb || "—"}</dd>
+          </dl>
+          <Field label="Type CONFIRM to continue">
+            <Input
+              value={restoreConfirm}
+              onChange={(event) => setRestoreConfirm(event.target.value)}
+              placeholder="CONFIRM"
+              className="font-mono"
+              autoFocus
+            />
+          </Field>
+        </div>
+      </ConfirmModal>
 
       <ConfirmModal
         open={Boolean(archiveToDelete)}

@@ -29,7 +29,13 @@ import {
   checkLoginRate,
   resetLoginRate,
 } from "./auth";
-import { isPostgresImage, dockerVersion } from "./docker";
+import {
+  isPostgresImage,
+  dockerVersion,
+  containerDatabases,
+  execStream,
+  PG_READ_ONLY_ENV,
+} from "./docker";
 import { discoverProjects, inspectForManualAdd, composeProjectSummary } from "./discovery";
 import { cachedContainers, cachedPgInfo, forgetServer } from "./containerCache";
 import { autoImportDiscoveredProjects } from "./autoDiscover";
@@ -54,7 +60,6 @@ import {
   createArchive,
   deleteArchive,
   checkArchive,
-  exportArchiveStream,
   exportRepoStream,
   exportAllStream,
   importArchiveFromFile,
@@ -65,6 +70,8 @@ import {
   enqueueProject,
   enqueueAll,
   cancelJob,
+  claimServerForDump,
+  releaseServerForDump,
   readJobLog,
   runningJobCount,
   syncProjectArchives,
@@ -1318,6 +1325,11 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         memberPath: z.string().optional(),
         targetDatabase: z.string().regex(/^[a-zA-Z0-9_]+$/, "Use letters, numbers, and underscores"),
         overwrite: z.boolean().optional(),
+        // Every restore writes to a live database: require the typed confirmation
+        // here too, not only in the UI, so scripts and stray API calls can't skip it.
+        confirm: z.literal("CONFIRM", {
+          errorMap: () => ({ message: "Type CONFIRM to restore" }),
+        }),
       })
       .safeParse(request.body);
     if (!body.success) return sendError(reply, 400, body.error.issues[0]?.message || "Invalid body");
@@ -1428,21 +1440,98 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     return reply;
   });
 
-  app.get("/api/projects/:id/archives/:name/export", async (request, reply) => {
+  /**
+   * Live database export: runs pg_dump (custom format, read-only session) in the
+   * project's container and streams it straight to the browser. Nothing is
+   * stored. Takes the server's single dump slot, so it never overlaps a backup.
+   */
+  app.get("/api/projects/:id/dump", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
-    const name = archiveName(request);
-    const child = exportArchiveStream(project, name);
-    reply.header("Content-Type", "application/x-tar");
-    reply.header(
-      "Content-Disposition",
-      `attachment; filename="${project.slug}-${name}.tar"`,
-    );
-    child.stderr.on("data", (c: Buffer) => app.log.warn(c.toString()));
-    child.on("error", () => {
-      if (!reply.sent) reply.code(500).send({ error: "Export failed" });
-    });
-    return reply.send(child.stdout);
+    const server = await getServer(project.server_id);
+    if (!server) return sendError(reply, 404, "Docker server not found");
+
+    let container;
+    try {
+      ({ container } = await resolveProjectContainer(project, server));
+    } catch (error) {
+      return sendError(reply, 404, error instanceof Error ? error.message : "Container not found");
+    }
+    if (container.state !== "running") {
+      return sendError(reply, 409, `Container ${container.name} is not running`);
+    }
+    const pgUser = project.pg_user || container.env.POSTGRES_USER || "postgres";
+    const live = await containerDatabases(container.id, pgUser, server).catch(() => []);
+    const requested = String((request.query as any)?.database || "").trim();
+    const database =
+      requested ||
+      project.pg_default_db ||
+      live.find((db) => db.name !== "postgres")?.name ||
+      "";
+    if (!database || !live.some((db) => db.name === database)) {
+      return sendError(reply, 400, `Database "${database || "?"}" was not found in ${container.name}`);
+    }
+
+    if (!claimServerForDump(server.id)) {
+      return sendError(
+        reply,
+        409,
+        `A backup or export is already running on ${server.name}. Try again when it finishes.`,
+      );
+    }
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseServerForDump(server.id);
+    };
+
+    try {
+      const handle = await execStream(
+        container.id,
+        // Same flags as scheduled backups: read-only, never waits behind DDL.
+        ["pg_dump", "-U", pgUser, "-Fc", "-Z", "0", "--lock-wait-timeout=30s", "-d", database],
+        { env: PG_READ_ONLY_ENV },
+        server,
+      );
+      // Client went away (download canceled): stop pg_dump on the source.
+      request.raw.on("close", () => {
+        if (!reply.raw.writableFinished) handle.abort();
+      });
+      handle.done
+        .then(async (result) => {
+          release();
+          await audit(getActor(request), "project.dump_export", project.slug, {
+            database,
+            exitCode: result.exitCode,
+          }).catch(() => {});
+          if (result.exitCode > 0) {
+            request.log.warn({ stderr: result.stderr }, `pg_dump export failed for ${project.slug}`);
+          }
+        })
+        .catch(release);
+
+      // Wait for the first bytes so an immediate failure becomes a proper error
+      // response instead of a broken download.
+      const started = await new Promise<boolean>((resolve) => {
+        handle.stdout.once("readable", () => resolve(handle.stdout.readableLength > 0));
+        handle.stdout.once("error", () => resolve(false));
+      });
+      if (!started) {
+        const result = await handle.done;
+        return sendError(reply, 500, result.stderr.trim() || "pg_dump failed");
+      }
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `${project.slug}-${database}-${stamp}.dump`.replace(/[^a-zA-Z0-9_.-]/g, "_");
+      reply.header("Content-Type", "application/octet-stream");
+      reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+      reply.header("Cache-Control", "no-store");
+      return reply.send(handle.stdout);
+    } catch (error) {
+      release();
+      return sendError(reply, 500, error instanceof Error ? error.message : "Export failed");
+    }
   });
 
   app.get("/api/projects/:id/export", async (request, reply) => {

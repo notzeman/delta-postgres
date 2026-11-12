@@ -11,6 +11,7 @@ export default function ConfirmModal({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   loading = false,
+  confirmDisabled = false,
   error,
   children,
 }: {
@@ -22,6 +23,8 @@ export default function ConfirmModal({
   confirmLabel?: string;
   cancelLabel?: string;
   loading?: boolean;
+  /** Keep the confirm button disabled (e.g. until a confirmation is typed). */
+  confirmDisabled?: boolean;
   error?: string;
   children?: React.ReactNode;
 }) {
@@ -46,7 +49,13 @@ export default function ConfirmModal({
           <Button type="button" onClick={onClose} disabled={loading}>
             {cancelLabel}
           </Button>
-          <Button type="button" variant="danger" onClick={onConfirm} loading={loading}>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={onConfirm}
+            loading={loading}
+            disabled={confirmDisabled}
+          >
             {confirmLabel}
           </Button>
         </div>

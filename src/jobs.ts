@@ -439,6 +439,21 @@ export async function runJob(jobId: number): Promise<void> {
   }
 }
 
+/**
+ * Reserve a server's single dump slot for work outside the job queue (a live
+ * dump download), so a source host never runs two dumps at once. Scheduled
+ * jobs for that server wait until it is released. Returns false if busy.
+ */
+export function claimServerForDump(serverId: number): boolean {
+  if (activeServers.has(serverId)) return false;
+  activeServers.add(serverId);
+  return true;
+}
+
+export function releaseServerForDump(serverId: number): void {
+  activeServers.delete(serverId);
+}
+
 export function cancelJob(jobId: number): void {
   canceledJobs.add(jobId);
   // Stop a dump that is already streaming instead of letting it run to the end.

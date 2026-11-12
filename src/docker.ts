@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { spawn } from "child_process";
-import { Writable } from "stream";
+import { PassThrough, Writable } from "stream";
 import { dockerClient, type ServerRow } from "./servers";
 import { config } from "./config";
 
@@ -342,6 +342,120 @@ export async function execToFile(
   if (onLine && errBuf.trim()) onLine(errBuf);
   const info = await exec.inspect();
   return { exitCode: info.ExitCode ?? 1, stdout: "", stderr };
+}
+
+/**
+ * Docker multiplexed-stream demuxer that respects backpressure: when the
+ * stdout consumer (e.g. a browser download) is slow, it stops accepting input,
+ * which pauses the HTTP/SSH stream and, in turn, the command in the container.
+ * (docker-modem's demuxStream writes without waiting, so a slow consumer would
+ * make it buffer an entire database dump in memory.)
+ */
+class DockerStreamDemuxer extends Writable {
+  private buffer: Buffer = Buffer.alloc(0);
+
+  constructor(
+    private readonly stdout: Writable,
+    private readonly onStderr: (chunk: Buffer) => void,
+  ) {
+    super();
+  }
+
+  _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
+    const out: Buffer[] = [];
+    while (this.buffer.length >= 8) {
+      const type = this.buffer[0];
+      const length = this.buffer.readUInt32BE(4);
+      if (this.buffer.length < 8 + length) break;
+      const payload = this.buffer.subarray(8, 8 + length);
+      this.buffer = this.buffer.subarray(8 + length);
+      if (type === 2) this.onStderr(payload);
+      else out.push(payload);
+    }
+    if (out.length === 0) return callback();
+    let flowing = true;
+    for (const payload of out) flowing = this.stdout.write(payload) && flowing;
+    if (flowing) callback();
+    else this.stdout.once("drain", () => callback());
+  }
+}
+
+export interface ExecStreamHandle {
+  /** Command stdout. Ends on success; errors if the command fails or stops. */
+  stdout: PassThrough;
+  /** Settles when the command has finished or been stopped. */
+  done: Promise<ExecResult>;
+  /** Stop the command inside the container (e.g. the client went away). */
+  abort: () => void;
+}
+
+/**
+ * Run a command and expose its stdout as a stream (binary safe, with
+ * backpressure). Used for live dump downloads.
+ */
+export async function execStream(
+  containerId: string,
+  cmd: string[],
+  opts: { env?: string[]; user?: string } = {},
+  server?: ServerRow | null,
+): Promise<ExecStreamHandle> {
+  const docker = dockerClient(server);
+  const container = docker.getContainer(containerId);
+  const tag = crypto.randomUUID();
+  const exec = await container.exec({
+    Cmd: taggedCommand(cmd, tag),
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+    Env: opts.env,
+    User: opts.user,
+  });
+  const stream: any = await exec.start({ Detach: false, Tty: false });
+  const stdout = new PassThrough();
+  let stderr = "";
+  const demuxer = new DockerStreamDemuxer(stdout, (chunk) => {
+    if (stderr.length < 64 * 1024) stderr += chunk.toString("utf8");
+  });
+  stream.pipe(demuxer);
+
+  let aborted = false;
+  let ended = false;
+  let stopWaiting: () => void = () => {};
+  const abort = () => {
+    if (aborted) return;
+    aborted = true;
+    stopWaiting();
+    stream.destroy();
+  };
+
+  const done = (async (): Promise<ExecResult> => {
+    await new Promise<void>((resolve) => {
+      stopWaiting = resolve;
+      demuxer.on("finish", () => {
+        ended = true;
+        resolve();
+      });
+      stream.on("close", resolve);
+      stream.on("error", () => resolve());
+    });
+    if (aborted || !ended) {
+      // Never leave an unattended pg_dump running on the source host.
+      await terminateTaggedExec(containerId, tag, server).catch(() => {});
+    }
+    if (aborted) {
+      stdout.destroy(new ExecAbortedError());
+      return { exitCode: -1, stdout: "", stderr };
+    }
+    const info = await exec.inspect().catch(() => null);
+    const exitCode = info?.ExitCode ?? 1;
+    if (exitCode === 0 && ended) stdout.end();
+    // Fail the stream so a download is visibly incomplete, not silently truncated.
+    else stdout.destroy(new Error(stderr.trim() || `Command exited with code ${exitCode}`));
+    return { exitCode, stdout: "", stderr };
+  })();
+
+  return { stdout, done, abort };
 }
 
 export async function copyFileToContainer(

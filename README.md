@@ -154,27 +154,34 @@ Backups are designed to be read-only against your projects:
 - Only projects that are **enabled** and not **ignored** are considered. Disabled projects are never backed up.
 - **One backup per Docker server runs at a time.** The concurrency setting caps total jobs, but a single source host never gets parallel dumps.
 - `pg_dump` uses `--lock-wait-timeout=30s`, so it aborts rather than waiting behind a DDL lock and blocking your application.
-- Restores and dump imports are **manual only**. Overwriting a database requires typing `CONFIRM`, and nothing is restored on a schedule.
+- Restores are **manual only** and every restore requires typing `CONFIRM` in a warning modal (enforced by the API too). Importing a dump only adds it to the backups list, and nothing is restored on a schedule.
 - Retention and pruning operate only inside the project's Borg repository. Source databases are never touched.
 
 ### Restore
 
 Open a project and choose **Restore**:
 
-1. Pick an archive. The **Database dump** list is read from that archive's `databases/*.dump` files.
-2. Choose a **Target database**. The default is a new database named `restore_<db>_<date>`.
-3. Optionally enable **Overwrite**. This terminates connections and drops the target, and you have to type the target name to confirm.
+1. Pick a backup. The dump for the project's primary database is selected from it automatically.
+2. By default the restore goes into a new database named `restore_<db>_<date>`; existing databases are untouched.
+3. Optionally enable **Overwrite** to drop the primary database and restore in place (connected clients are disconnected).
+4. Click **Restore**. A warning modal shows the server, container, backup and target, and every restore (new database or overwrite) requires typing `CONFIRM`. The API enforces the same confirmation, so it can't be skipped by calling it directly.
 
-The dump is extracted from Borg and piped into `pg_restore` inside the container.
+The dump is extracted from Borg and restored with `pg_restore` (or `psql` for plain SQL) inside the container.
 
 ### Import and export
+
+**Per project** (Project → Export / import dump):
+
+- **Export database** takes a fresh `pg_dump -Fc` of the chosen database right now (read-only session, same flags as backups) and downloads it as a `.dump` file. Nothing is stored. It shares the server's single dump slot, so it never runs alongside a backup on the same host; canceling the download stops `pg_dump` on the source.
+- **Import a dump** uploads a single-database `pg_dump` file (`.dump`, `.backup`, `.sql`, `.tar`) and adds it to the project's **Backups** list. Nothing is restored automatically; restore it from the **Restore** tab like any other backup.
+
+**Borg data** (Import / Export page):
 
 | Operation | Format | Where |
 |---|---|---|
 | Catalog only | JSON | Import / Export → Catalog |
-| Single archive | `.tar` (`borg export-tar`) | Project → Import / export |
-| Single project repository | `.tar` of the encrypted repo | Project → Import / export |
-| Import an archive or repository | `.tar` upload | Project → Import / export |
+| Single project repository | `.tar` of the encrypted repo | Import / Export → Export |
+| Import an archive or repository | `.tar` upload | Import / Export → Import |
 | All repositories | `.tar` of `backups/` | Import / Export → All repositories |
 
 An archive is the whole Borg archive, not a single dump: it contains `globals.sql`, `manifest.json` and one `databases/<name>.dump` per database. Archives are imported with `borg import-tar`. Importing a full repository replaces the project's repo and clears its Borg cache so a relocated repo can be adopted. Repositories must use the same `BORG_PASSPHRASE`.

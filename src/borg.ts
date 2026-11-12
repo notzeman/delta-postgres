@@ -305,14 +305,6 @@ export async function checkArchive(
   }
 }
 
-export function exportArchiveStream(project: Project, name: string) {
-  return spawnStream(
-    "borg",
-    ["export-tar", archiveRef(project, name), "-"],
-    { env: borgEnv(project) },
-  );
-}
-
 export function exportRepoStream(project: Project) {
   const root = projectBackupDir(project);
   return spawn("tar", ["-cf", "-", "-C", root, "."], {
