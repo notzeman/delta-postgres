@@ -20,6 +20,8 @@ import type { Username } from "../App";
 import { cn } from "./ui";
 import Tooltip from "./Tooltip";
 import DeltaMark from "./DeltaMark";
+import { withViewTransition } from "./viewTransition";
+import { useSlidingIndicator } from "./useSlidingIndicator";
 
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -41,17 +43,22 @@ function NavItem({
       to={item.to}
       end={item.to === "/"}
       onClick={onNavigate}
+      viewTransition
       className={({ isActive }) =>
         cn(
-          "relative flex items-center gap-3 rounded-2xl py-2.5 pl-5 pr-3.5 text-[15px] transition",
+          "relative z-10 flex items-center gap-3 rounded-2xl py-2.5 pl-5 pr-3.5 text-[15px] transition-colors duration-300",
           isActive
-            ? "glass font-semibold text-slate-100 before:absolute before:left-1.5 before:top-1/2 before:h-4 before:w-1 before:-translate-y-1/2 before:rounded-full before:bg-accent-500"
-            : "font-medium text-slate-400 hover:bg-white/[0.05] hover:text-slate-100",
+            ? "font-semibold text-slate-100"
+            : "font-medium text-slate-400 hover:text-slate-100",
         )
       }
     >
-      <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
-      <span className="truncate">{item.label}</span>
+      {() => (
+        <>
+          <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
+          <span className="truncate">{item.label}</span>
+        </>
+      )}
     </NavLink>
   );
 }
@@ -103,6 +110,7 @@ function TileLink({
       <NavLink
         to={to}
         onClick={onNavigate}
+        viewTransition
         aria-label={label}
         className={({ isActive }) =>
           cn("icon-tile", isActive && "!border-accent-500/30 !text-slate-100")
@@ -128,6 +136,8 @@ export default function Layout({
       : "light",
   );
   const title = useTitle();
+  const location = useLocation();
+  const navIndicator = useSlidingIndicator<HTMLElement>('a[aria-current="page"]', location.pathname);
   const health = useQuery({
     queryKey: ["health"],
     queryFn: () => api<Health>("/health"),
@@ -136,6 +146,10 @@ export default function Layout({
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
+    withViewTransition(() => applyTheme(next), "theme");
+  };
+
+  const applyTheme = (next: "dark" | "light") => {
     setTheme(next);
     document.documentElement.classList.remove("dark", "light");
     document.documentElement.classList.add(next);
@@ -199,7 +213,20 @@ export default function Layout({
           </button>
         </div>
 
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto" aria-label="Primary">
+        <nav
+          ref={navIndicator.ref}
+          className="relative min-h-0 flex-1 space-y-1 overflow-y-auto"
+          aria-label="Primary"
+          style={{ viewTransitionName: "nav", viewTransitionClass: "glass-bar" } as React.CSSProperties}
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "glass pointer-events-none absolute left-0 top-0 rounded-2xl before:absolute before:left-1.5 before:top-1/2 before:h-4 before:w-1 before:-translate-y-1/2 before:rounded-full before:bg-accent-500",
+              !navIndicator.visible && "opacity-0",
+            )}
+            style={navIndicator.style}
+          />
           {NAV.map((item) => (
             <NavItem key={item.to} item={item} onNavigate={close} />
           ))}
@@ -289,7 +316,12 @@ export default function Layout({
             </span>
           ) : null}
         </header>
-        <main className="mx-auto w-full max-w-7xl px-4 pb-10 pt-2 sm:px-6 lg:px-8">{children}</main>
+        <main
+          className="mx-auto w-full max-w-7xl px-4 pb-10 pt-2 sm:px-6 lg:px-8"
+          style={{ viewTransitionName: "page" } as React.CSSProperties}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

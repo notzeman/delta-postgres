@@ -220,6 +220,16 @@ html:not(.dark) .text-violet-300 {
     @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold;
   }
 
+  /* The sliding tab indicator: solid ink with a glassy top highlight. */
+  .glass-pill {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0) 55%),
+      rgb(var(--accent-500));
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.18) inset,
+      0 8px 18px -10px rgb(var(--accent-600) / 0.9);
+  }
+
   .count-pill {
     @apply inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-accent-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none;
     color: rgb(var(--on-accent));
@@ -316,7 +326,108 @@ html:not(.dark) .text-violet-300 {
   outline: none;
 }
 
+/*
+ * Glass view transitions.
+ * The page content leaves with a quick frost and arrives from a soft blur;
+ * the tab and nav pills are lifted into their own layers and glide between
+ * positions. The sidebar, header and tab bar stay put.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-group(*) {
+  animation-duration: 460ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-old(page) {
+  animation: vt-frost-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+::view-transition-new(page) {
+  animation: vt-frost-in 420ms cubic-bezier(0.22, 1, 0.36, 1) 60ms both;
+}
+
+/*
+ * Tab bars and the sidebar nav hold a live pill that glides with a CSS
+ * transition. Show only the live (new) layer so the pill visibly moves
+ * instead of crossfading, and keep it crisp above the frosting content.
+ */
+::view-transition-old(.glass-bar) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(.glass-bar) {
+  animation: none;
+}
+
+/* A tab bar only becomes its own layer for in-page tab switches; on page
+   navigation it frosts along with the rest of the content. */
+:root[data-vt="tab"] .vt-tabs {
+  view-transition-name: var(--vt-name);
+  view-transition-class: glass-bar;
+}
+
+/* Theme switch: a full-page frosted crossfade instead of the content blur. */
+:root[data-vt="theme"]::view-transition-old(root) {
+  animation: vt-fade-out 380ms ease both;
+}
+
+:root[data-vt="theme"]::view-transition-new(root) {
+  animation: vt-fade-in 380ms ease both;
+}
+
+:root[data-vt="theme"]::view-transition-old(page),
+:root[data-vt="theme"]::view-transition-old(.glass-bar) {
+  animation: vt-fade-out 380ms ease both;
+  opacity: 1;
+}
+
+:root[data-vt="theme"]::view-transition-new(page),
+:root[data-vt="theme"]::view-transition-new(.glass-bar) {
+  animation: vt-fade-in 380ms ease both;
+}
+
+@keyframes vt-frost-out {
+  to {
+    opacity: 0;
+    filter: blur(8px) saturate(1.1);
+    transform: translateY(-4px) scale(0.995);
+  }
+}
+
+@keyframes vt-frost-in {
+  from {
+    opacity: 0;
+    filter: blur(12px) saturate(1.15);
+    transform: translateY(8px) scale(0.995);
+  }
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
   *,
   *::before,
   *::after {

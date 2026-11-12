@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { LockKeyhole } from "lucide-react";
+import { Eye, EyeClosed, LockKeyhole } from "lucide-react";
 import { api } from "../api";
-import { Button, Card, ErrorBox, Field, Input } from "../components/ui";
+import { Button, Card, ErrorBox, Field, Input, cn } from "../components/ui";
 import DeltaMark from "../components/DeltaMark";
 import ChunkStrip from "../components/ChunkStrip";
 
@@ -10,6 +10,7 @@ const SETUP_COMMAND = "docker compose exec dashboard npm run create-admin";
 export default function Login({ onSuccess }: { onSuccess: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -59,11 +60,32 @@ export default function Login({ onSuccess }: { onSuccess: () => void }) {
             </Field>
             <Field label="Password">
               <Input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
                 required
+                trailing={
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                      showPassword
+                        ? "text-accent-400 hover:bg-accent-500/10"
+                        : "text-slate-500 hover:bg-white/5 hover:text-slate-200",
+                    )}
+                  >
+                    {showPassword ? (
+                      <Eye className="h-4 w-4" />
+                    ) : (
+                      <EyeClosed className="h-4 w-4" />
+                    )}
+                  </button>
+                }
               />
             </Field>
             {error ? <ErrorBox message={error} /> : null}

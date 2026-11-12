@@ -2,6 +2,8 @@ import React, { useEffect, useId } from "react";
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
 import { Check, Loader2, X } from "lucide-react";
 import { useSnackbar } from "./Snackbar";
+import { withViewTransition } from "./viewTransition";
+import { useSlidingIndicator } from "./useSlidingIndicator";
 
 export function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -229,8 +231,20 @@ export function Field({
   );
 }
 
-export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={cn("input", props.className)} />;
+export function Input({
+  trailing,
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { trailing?: React.ReactNode }) {
+  if (!trailing) {
+    return <input {...props} className={cn("input", className)} />;
+  }
+  return (
+    <div className="relative">
+      <input {...props} className={cn("input pr-11", className)} />
+      <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">{trailing}</div>
+    </div>
+  );
 }
 
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
@@ -300,31 +314,48 @@ export function Tabs({
   active: string;
   onChange: (id: string) => void;
 }) {
+  // View Transition names must be unique and CSS-ident safe.
+  const name = `tabs-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const indicator = useSlidingIndicator<HTMLDivElement>('[aria-selected="true"]', active);
   return (
     <div
+      ref={indicator.ref}
       role="tablist"
-      className="glass inline-flex max-w-full flex-wrap gap-1 rounded-full p-1"
+      className="vt-tabs glass relative inline-flex max-w-full flex-wrap gap-1 rounded-full p-1"
+      style={{ "--vt-name": name } as React.CSSProperties}
     >
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          aria-selected={active === tab.id}
-          onClick={() => onChange(tab.id)}
-          className={cn(
-            "inline-flex items-center rounded-full px-4 py-1.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50",
-            active === tab.id
-              ? "bg-accent-500 text-[rgb(var(--on-accent))]"
-              : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
-          )}
-        >
-          {tab.label}
-          {typeof tab.count === "number" ? (
-            <span className={cn("num ml-2 text-[11px] opacity-60", active === tab.id && "opacity-80")}>{tab.count}</span>
-          ) : null}
-        </button>
-      ))}
+      <span
+        aria-hidden="true"
+        className={cn("glass-pill pointer-events-none absolute left-0 top-0 rounded-full", !indicator.visible && "opacity-0")}
+        style={indicator.style}
+      />
+      {tabs.map((tab) => {
+        const selected = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => {
+              if (!selected) withViewTransition(() => onChange(tab.id), "tab");
+            }}
+            className={cn(
+              "relative z-10 inline-flex items-center rounded-full px-4 py-1.5 text-[13px] font-semibold transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50",
+              selected
+                ? "text-[rgb(var(--on-accent))] delay-75"
+                : "text-slate-400 hover:bg-white/[0.06] hover:text-slate-100",
+            )}
+          >
+            {tab.label}
+            {typeof tab.count === "number" ? (
+              <span className={cn("num ml-2 text-[11px] opacity-60", selected && "opacity-80")}>
+                {tab.count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
 }
