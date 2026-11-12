@@ -6,7 +6,6 @@ pipeline {
   triggers { githubPush() }
 
   environment {
-    DEPLOY_HOST = "***REMOVED***"
     DEPLOY_USER = "crono"
     DEPLOY_PATH = "/home/crono/delta-postgres"
   }
@@ -15,8 +14,9 @@ pipeline {
     stage('Deploy') {
       steps {
         sshagent(['prod-ssh']) {
-          sh '''
-ssh -q -T -o LogLevel=ERROR -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} << EOF
+          withCredentials([string(credentialsId: 'dev-deploy-host', variable: 'DEV_SERVER')]) {
+            sh '''
+ssh -q -T -o LogLevel=ERROR -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEV_SERVER} << EOF
 set -e
 
 cd ${DEPLOY_PATH}
@@ -27,7 +27,8 @@ docker compose up -d --build --force-recreate --remove-orphans
 
 echo "Deploy complete"
 EOF
-          '''
+            '''
+          }
         }
       }
     }
