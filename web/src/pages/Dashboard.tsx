@@ -39,11 +39,17 @@ import Picker from "../components/Picker";
 import ChunkStrip from "../components/ChunkStrip";
 import HoverTip from "../components/Tooltip";
 
-function ChartTooltip({ active, payload, label }: any) {
+function ChartTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
+  const point = payload[0].payload as ChartPoint;
   return (
     <div className="rounded-2xl border border-[rgb(var(--glass-border))] bg-ink-950 px-4 py-3 text-[13px] shadow-pop">
-      <p className="mb-1.5 font-semibold text-slate-100">{label}</p>
+      <p className="mb-1.5 font-semibold text-slate-100">
+        {point.fullLabel}
+        <span className="ml-2 font-normal text-slate-500">
+          {point.archives} {point.archives === 1 ? "backup" : "backups"}
+        </span>
+      </p>
       {payload.map((p: any) => (
         <p key={p.dataKey} className="text-slate-400">
           {p.name}: <span className="num font-semibold text-slate-100">{formatBytes(p.value)}</span>
@@ -79,74 +85,85 @@ function useChartColors() {
   );
 }
 
-type ChartPoint = { label: string; original: number; deduplicated: number };
+type ChartPoint = {
+  label: string;
+  fullLabel: string;
+  archives: number;
+  original: number;
+  deduplicated: number;
+};
 
 const chartTooltip = <ChartTooltip />;
 const yTick = (v: number) => formatBytes(v);
 
 /**
  * Memoized so dashboard refetches and hover state elsewhere don't re-render
- * (and re-animate) the SVG. It sits in its own paint layer so tooltip moves
- * don't force the frosted card behind it to re-blur.
+ * the SVG. Hover cost is dominated by compositing, so the card behind it is
+ * intentionally not backdrop-blurred (see `.glass` in index.css).
  */
 const StorageChart = React.memo(function StorageChart({ data }: { data: ChartPoint[] }) {
   const colors = useChartColors();
   const tick = useMemo(() => ({ fill: colors.tick, fontSize: 12 }), [colors.tick]);
-  const showDots = data.length <= 40;
+  const showDots = data.length <= 14;
   return (
-    <div className="h-full w-full [contain:layout_paint] [transform:translateZ(0)]">
-      <ResponsiveContainer width="100%" height="100%" debounce={120}>
-        <AreaChart data={data} margin={{ top: 12, right: 20, left: 4, bottom: 4 }}>
-          <defs>
-            <pattern id="hatch-logical" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <line x1="0" y1="0" x2="0" y2="6" stroke={colors.logical} strokeWidth="1.2" />
-            </pattern>
-          </defs>
-          <CartesianGrid stroke={colors.grid} strokeDasharray="4 6" vertical={false} />
-          <XAxis
-            dataKey="label"
-            tick={tick}
-            axisLine={false}
-            tickLine={false}
-            tickMargin={10}
-            minTickGap={24}
-            interval="preserveStartEnd"
-            padding={{ left: 12, right: 12 }}
-          />
-          <YAxis tick={tick} axisLine={false} tickLine={false} width={76} tickFormatter={yTick} />
-          <Tooltip
-            content={chartTooltip}
-            cursor={{ stroke: colors.grid }}
-            isAnimationActive={false}
-            wrapperStyle={{ outline: "none" }}
-          />
-          <Area
-            type="monotone"
-            dataKey="original"
-            name="Dump size"
-            stroke={colors.logical}
-            strokeDasharray="2 5"
-            strokeLinecap="round"
-            fill="url(#hatch-logical)"
-            strokeWidth={2.5}
-            dot={showDots ? { r: 2.5, fill: colors.stored, stroke: "none" } : false}
-            activeDot={{ r: 4, fill: colors.stored, stroke: "none" }}
-            isAnimationActive={false}
-          />
-          <Area
-            type="monotone"
-            dataKey="deduplicated"
-            name="New data stored"
-            stroke={colors.stored}
-            fill="transparent"
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 4, fill: colors.stored, stroke: "none" }}
-            isAnimationActive={false}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
+    <ResponsiveContainer width="100%" height="100%" debounce={120}>
+      <AreaChart data={data} margin={{ top: 12, right: 20, left: 4, bottom: 4 }}>
+        <defs>
+          <pattern id="hatch-logical" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={colors.logical} strokeWidth="1.2" />
+          </pattern>
+        </defs>
+        <CartesianGrid stroke={colors.grid} strokeDasharray="4 6" vertical={false} />
+        <XAxis
+          dataKey="label"
+          tick={tick}
+          axisLine={false}
+          tickLine={false}
+          tickMargin={10}
+          minTickGap={24}
+          interval="preserveStartEnd"
+          padding={{ left: 12, right: 12 }}
+        />
+        <YAxis
+          tick={tick}
+          axisLine={false}
+          tickLine={false}
+          width={76}
+          domain={[0, "auto"]}
+          tickFormatter={yTick}
+        />
+        <Tooltip
+          content={chartTooltip}
+          cursor={{ stroke: colors.grid }}
+          isAnimationActive={false}
+          wrapperStyle={{ outline: "none" }}
+        />
+        <Area
+          type="monotone"
+          dataKey="original"
+          name="Dumped"
+          stroke={colors.logical}
+          strokeDasharray="2 5"
+          strokeLinecap="round"
+          fill="url(#hatch-logical)"
+          strokeWidth={2.5}
+          dot={showDots ? { r: 2.5, fill: colors.stored, stroke: "none" } : false}
+          activeDot={{ r: 4, fill: colors.stored, stroke: "none" }}
+          isAnimationActive={false}
+        />
+        <Area
+          type="monotone"
+          dataKey="deduplicated"
+          name="New data stored"
+          stroke={colors.stored}
+          fill="transparent"
+          strokeWidth={2}
+          dot={false}
+          activeDot={{ r: 4, fill: colors.stored, stroke: "none" }}
+          isAnimationActive={false}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
   );
 });
 
@@ -242,14 +259,21 @@ export default function Dashboard() {
   const stats = statsQuery.data;
   const projects = projectsQuery.data?.projects || [];
   const health = healthQuery.data;
-  const chartData = useMemo(() => (stats?.storageSeries || []).map((point) => ({
-    label: new Date(point.created_at).toLocaleDateString(undefined, {
-      month: "short",
-      day: "2-digit",
-    }),
-    original: point.original_size || 0,
-    deduplicated: point.deduplicated_size || 0,
-  })), [stats?.storageSeries]);
+  const chartData = useMemo<ChartPoint[]>(
+    () =>
+      (stats?.storageDaily || []).map((point) => {
+        const [y, m, d] = point.day.split("-").map(Number);
+        const date = new Date(y, m - 1, d);
+        return {
+          label: date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+          fullLabel: date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+          archives: Number(point.archives) || 0,
+          original: Number(point.original_size) || 0,
+          deduplicated: Number(point.deduplicated_size) || 0,
+        };
+      }),
+    [stats?.storageDaily],
+  );
 
   const failing = projects.filter((project) => project.last_status === "failed");
   const statsLoading = statsQuery.isLoading;
@@ -395,7 +419,7 @@ export default function Dashboard() {
       <Card>
         <CardHeader
           title="Storage growth"
-          subtitle="Size of each dump compared with the new data Borg stored"
+          subtitle="Data dumped each day compared with the new data Borg stored, last 30 days"
         />
         <div className="h-72 px-3 pb-4 pt-5 sm:h-80 sm:px-5">
           {statsLoading ? (

@@ -181,12 +181,12 @@ export interface Stats {
   lastSuccessAt: string | null;
   last24: Record<string, number>;
   recentJobs: Job[];
-  storageSeries: Array<{
-    name: string;
-    created_at: string;
-    original_size: number | null;
-    deduplicated_size: number | null;
-    project: string;
+  /** Daily totals for the last 30 days; `day` is YYYY-MM-DD in the configured timezone. */
+  storageDaily: Array<{
+    day: string;
+    archives: number;
+    original_size: number;
+    deduplicated_size: number;
   }>;
 }
 

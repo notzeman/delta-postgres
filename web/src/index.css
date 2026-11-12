@@ -155,8 +155,12 @@ html:not(.dark) .text-violet-300 {
 }
 
 @layer components {
+  /* Static glass is deliberately not backdrop-blurred: it only ever sits over the
+     fixed page gradient, where a blur is visually a no-op but forces the compositor
+     to re-run blur passes on every changed frame (chart hover dropped to ~20fps).
+     Surfaces with real content moving beneath them (.popover, header, snackbar) keep it. */
   .glass {
-    @apply border backdrop-blur-xl;
+    @apply border;
     background-color: rgb(var(--glass));
     border-color: rgb(var(--glass-border));
     box-shadow: var(--shadow-glass);

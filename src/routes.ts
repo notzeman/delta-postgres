@@ -489,7 +489,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const projects = await getProjects(serverId);
     const projectIds = projects.map((p) => p.id);
     const filterIds = serverId ? projectIds : null;
-    const [allJobs, totals, lastSuccess, last24, series] = await Promise.all([
+    const settings = await getSettings();
+    const timezone = String(settings.timezone || config.timezone);
+    const [allJobs, totals, lastSuccess, last24, daily] = await Promise.all([
       getJobs(200),
       pool.query<{
         archives: string;
@@ -518,12 +520,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
          GROUP BY status`,
         [filterIds],
       ),
-      pool.query(
-        `SELECT a.name, a.created_at, a.original_size, a.deduplicated_size, p.name AS project
-         FROM archives a JOIN projects p ON p.id = a.project_id
+      // One point per day (in the configured timezone) across all selected projects.
+      // float8 casts make pg return numbers instead of BIGINT strings.
+      pool.query<{ day: string; archives: number; original_size: number; deduplicated_size: number }>(
+        `SELECT to_char((a.created_at AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS day,
+                count(*)::int AS archives,
+                coalesce(sum(a.original_size), 0)::float8 AS original_size,
+                coalesce(sum(a.deduplicated_size), 0)::float8 AS deduplicated_size
+         FROM archives a
          WHERE ($1::int[] IS NULL OR a.project_id = ANY($1::int[]))
-         ORDER BY a.created_at DESC NULLS LAST LIMIT 30`,
-        [filterIds],
+           AND a.created_at >= now() - interval '30 days'
+         GROUP BY 1
+         ORDER BY 1`,
+        [filterIds, timezone],
       ),
     ]);
     const jobs = allJobs
@@ -543,7 +552,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       lastSuccessAt: lastSuccess.rows[0]?.at || null,
       last24: Object.fromEntries(last24.rows.map((r) => [r.status, Number(r.count)])),
       recentJobs: jobs,
-      storageSeries: series.rows.reverse(),
+      storageDaily: daily.rows,
     };
   });
 
