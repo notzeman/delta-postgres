@@ -42,12 +42,11 @@ import HoverTip from "../components/Tooltip";
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-white/10 bg-ink-950/95 px-3 py-2 text-xs shadow-xl">
-      <p className="mb-1 font-medium text-slate-200">{label}</p>
+    <div className="popover px-4 py-3 text-[13px]">
+      <p className="mb-1.5 font-semibold text-slate-100">{label}</p>
       {payload.map((p: any) => (
         <p key={p.dataKey} className="text-slate-400">
-          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full" style={{ background: p.color }} />
-          {p.name}: {formatBytes(p.value)}
+          {p.name}: <span className="num font-semibold text-slate-100">{formatBytes(p.value)}</span>
         </p>
       ))}
     </div>
@@ -70,9 +69,9 @@ function useChartColors() {
   }, []);
   return useMemo(
     () => ({
-      logical: readVar("--accent-400"),
-      stored: readVar("--delta-400"),
-      grid: readVar("--white", 0.06),
+      logical: readVar("--hatch", 0.32),
+      stored: readVar("--accent-500"),
+      grid: readVar("--white", 0.12),
       tick: readVar("--slate-500"),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,7 +93,7 @@ function LedgerStat({
   loading: boolean;
 }) {
   return (
-    <div className="px-5 py-4 sm:px-6">
+    <div className="px-5 py-5 sm:px-6">
       <dt className="flex items-center gap-2 text-[13px] font-medium text-slate-400">
         <span className="text-slate-500">{icon}</span>
         {label}
@@ -104,7 +103,7 @@ function LedgerStat({
           <Skeleton className="h-6 w-24" />
         ) : (
           <>
-            <span className="text-xl font-semibold tracking-tight text-slate-100">{value}</span>
+            <span className="figure text-[30px] leading-tight">{value}</span>
             <span className="mt-0.5 block text-xs text-slate-500">{hint}</span>
           </>
         )}
@@ -198,13 +197,13 @@ export default function Dashboard() {
               <Skeleton className="mt-3 h-10 w-56" />
             ) : (
               <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                <span className="text-[44px] font-semibold leading-none tracking-tight text-slate-100 [font-variant-numeric:tabular-nums]">
+                <span className="figure text-[64px] leading-none">
                   {ratio > 0 ? `${ratio.toFixed(1)}×` : "No data yet"}
                 </span>
                 {ratio > 0 ? (
                   <span className="max-w-md text-sm text-slate-400">
                     <span className="num text-slate-200">{formatBytes(logicalBytes)}</span> of dumps, only{" "}
-                    <span className="num text-delta-400">{formatBytes(storedBytes)}</span> stored as new data
+                    <span className="num font-semibold text-slate-100">{formatBytes(storedBytes)}</span> stored as new data
                   </span>
                 ) : (
                   <span className="text-sm text-slate-400">Run a backup to see how much Borg saves.</span>
@@ -252,15 +251,15 @@ export default function Dashboard() {
           <ChunkStrip logical={loading ? 0 : logicalBytes} stored={storedBytes} count={40} />
           <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-[2px] bg-accent-400/25" /> Already in the repository
+              <span className="hatch h-3 w-3 rounded" /> Already in the repository
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-[2px] bg-delta-400" /> Stored as new data
+              <span className="h-3 w-3 rounded bg-delta-400" /> Stored as new data
             </span>
           </div>
         </div>
 
-        <dl className="mt-5 grid grid-cols-1 divide-y divide-white/[0.07] border-t border-white/[0.07] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <dl className="mt-6 grid grid-cols-1 divide-y divide-white/[0.08] border-t border-white/[0.08] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           <LedgerStat
             icon={<Database className="h-4 w-4" />}
             label="Projects"
@@ -405,45 +404,46 @@ export default function Dashboard() {
                   title="Storage growth"
                   subtitle="Size of each dump compared with the new data Borg stored"
                 />
-                <div className="h-56 px-2 py-3">
+                <div className="h-60 px-2 py-4">
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                         <defs>
-                          <linearGradient id="orig" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={colors.logical} stopOpacity={0.35} />
-                            <stop offset="100%" stopColor={colors.logical} stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="dedup" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={colors.stored} stopOpacity={0.3} />
-                            <stop offset="100%" stopColor={colors.stored} stopOpacity={0} />
-                          </linearGradient>
+                          <pattern id="hatch-logical" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                            <line x1="0" y1="0" x2="0" y2="6" stroke={colors.logical} strokeWidth="1.2" />
+                          </pattern>
                         </defs>
-                        <CartesianGrid stroke={colors.grid} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fill: colors.tick, fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <CartesianGrid stroke={colors.grid} strokeDasharray="4 6" vertical={false} />
+                        <XAxis dataKey="label" tick={{ fill: colors.tick, fontSize: 12 }} axisLine={false} tickLine={false} />
                         <YAxis
-                          tick={{ fill: colors.tick, fontSize: 11 }}
+                          tick={{ fill: colors.tick, fontSize: 12 }}
                           axisLine={false}
                           tickLine={false}
                           width={68}
                           tickFormatter={(v) => formatBytes(v)}
                         />
-                        <Tooltip content={<ChartTooltip />} />
+                        <Tooltip content={<ChartTooltip />} cursor={{ stroke: colors.grid }} />
                         <Area
                           type="monotone"
                           dataKey="original"
-                          name="Logical"
+                          name="Dump size"
                           stroke={colors.logical}
-                          fill="url(#orig)"
-                          strokeWidth={1.6}
+                          strokeDasharray="2 5"
+                          strokeLinecap="round"
+                          fill="url(#hatch-logical)"
+                          strokeWidth={2.5}
+                          dot={{ r: 2.5, fill: colors.stored, stroke: "none" }}
+                          activeDot={{ r: 4, fill: colors.stored, stroke: "none" }}
                         />
                         <Area
                           type="monotone"
                           dataKey="deduplicated"
-                          name="New stored"
+                          name="New data stored"
                           stroke={colors.stored}
-                          fill="url(#dedup)"
-                          strokeWidth={1.6}
+                          fill="transparent"
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, fill: colors.stored, stroke: "none" }}
                         />
                       </AreaChart>
                     </ResponsiveContainer>

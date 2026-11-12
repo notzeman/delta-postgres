@@ -41,16 +41,16 @@ function OptionContent({
           </span>
         ) : null}
       </span>
-      {selected ? <Check className="h-4 w-4 shrink-0 text-accent-400" /> : null}
+      {selected ? <Check className="h-4 w-4 shrink-0 text-accent-500" /> : null}
     </>
   );
 }
 
 const optionClass =
-  "group flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none data-[focus]:bg-white/10 data-[selected]:text-slate-100 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40";
+  "group flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-300 outline-none data-[focus]:bg-white/[0.08] data-[selected]:text-slate-100 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40";
 
 const panelClass =
-  "z-50 max-h-72 overflow-auto rounded-xl border border-white/10 bg-ink-900 p-1 shadow-pop [--anchor-gap:6px]";
+  "popover z-50 max-h-72 overflow-auto p-1.5 [--anchor-gap:8px]";
 
 export default function Picker({
   value,

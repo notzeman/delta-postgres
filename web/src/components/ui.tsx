@@ -27,10 +27,10 @@ export function CardHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
+    <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-6 py-5">
       <div className="min-w-0">
-        <h3 className="text-[15px] font-semibold text-slate-100">{title}</h3>
-        {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
+        <h3 className="text-[17px] font-semibold text-slate-100">{title}</h3>
+        {subtitle ? <p className="mt-0.5 text-[13px] text-slate-500">{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -162,18 +162,18 @@ export function Modal({
 }) {
   return (
     <Dialog open={open} onClose={onClose} className="relative z-50">
-      <DialogBackdrop className="fixed inset-0 bg-black/60" />
+      <DialogBackdrop className="fixed inset-0 bg-[rgb(var(--ink-950)/0.45)] backdrop-blur-sm" />
       <div className="fixed inset-0 overflow-y-auto">
         <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-8">
           <DialogPanel
             className={cn(
-              "popover w-full overflow-hidden rounded-xl",
+              "popover w-full overflow-hidden rounded-[24px]",
               wide ? "max-w-3xl" : "max-w-lg",
             )}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
+            <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-6 py-5">
               <div className="min-w-0">
-                <DialogTitle className="text-base font-semibold text-slate-100">{title}</DialogTitle>
+                <DialogTitle className="text-lg font-semibold text-slate-100">{title}</DialogTitle>
                 {subtitle ? <p className="mt-0.5 text-[13px] text-slate-400">{subtitle}</p> : null}
               </div>
               <button
@@ -185,7 +185,7 @@ export function Modal({
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="max-h-[75vh] overflow-y-auto px-5 py-4">{children}</div>
+            <div className="max-h-[75vh] overflow-y-auto px-6 py-5">{children}</div>
           </DialogPanel>
         </div>
       </div>
@@ -264,7 +264,7 @@ export function StatCard({
         ) : null}
         {label}
       </div>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-100">{value}</p>
+      <p className="figure mt-2 text-[32px] leading-tight">{value}</p>
       {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
     </div>
   );
@@ -303,7 +303,7 @@ export function Tabs({
   return (
     <div
       role="tablist"
-      className="flex flex-wrap gap-1 rounded-lg border border-white/[0.07] bg-ink-900 p-1"
+      className="glass inline-flex max-w-full flex-wrap gap-1 rounded-full p-1"
     >
       {tabs.map((tab) => (
         <button
@@ -313,15 +313,15 @@ export function Tabs({
           aria-selected={active === tab.id}
           onClick={() => onChange(tab.id)}
           className={cn(
-            "rounded-md px-3 py-1.5 text-[13px] font-medium transition",
+            "inline-flex items-center rounded-full px-4 py-1.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50",
             active === tab.id
-              ? "bg-accent-500/15 text-accent-300"
+              ? "bg-accent-500 text-[rgb(var(--on-accent))]"
               : "text-slate-400 hover:bg-white/5 hover:text-slate-200",
           )}
         >
           {tab.label}
           {typeof tab.count === "number" ? (
-            <span className="num ml-1.5 text-[11px] text-slate-500">{tab.count}</span>
+            <span className={cn("num ml-2 text-[11px] opacity-60", active === tab.id && "opacity-80")}>{tab.count}</span>
           ) : null}
         </button>
       ))}
@@ -363,17 +363,17 @@ export function Checkbox({
       />
       <span
         className={cn(
-          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40",
+          "mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border transition peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40",
           checked
             ? tone === "warning"
               ? "border-amber-400 bg-amber-400"
               : "border-accent-500 bg-accent-500"
-            : "border-white/15 bg-ink-950/60 group-hover:border-white/30",
+            : "border-white/20 bg-white/[0.06] group-hover:border-white/35",
         )}
       >
         <Check
           className={cn(
-            "h-3 w-3 text-ink-950 transition",
+            "h-3 w-3 text-[rgb(var(--on-accent))] transition",
             checked ? "opacity-100" : "opacity-0",
           )}
           strokeWidth={3}
@@ -426,13 +426,13 @@ export function Switch({
           "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40",
           checked
             ? "border-accent-500 bg-accent-500"
-            : "border-white/10 bg-white/5 group-hover:border-white/20",
+            : "border-white/15 bg-white/[0.06] group-hover:border-white/25",
         )}
       >
         <span
           className={cn(
-            "absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all",
-            checked ? "left-6" : "left-1",
+            "absolute top-1 h-4 w-4 rounded-full shadow-sm transition-all",
+            checked ? "left-6 bg-[rgb(var(--on-accent))]" : "left-1 bg-slate-400",
           )}
         />
       </span>

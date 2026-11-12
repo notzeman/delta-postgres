@@ -3,60 +3,78 @@
 @tailwind utilities;
 
 /*
- * Delta ledger tokens.
- * Dark ground is a blue-black derived from the Postgres elephant blue.
- * "accent" = primary action blue. "delta" = changed / newly stored data only.
- * In light mode the slate scale is inverted so text utilities keep working.
+ * Mist glass theme.
+ * Light: frosted glass on a blue-grey to mint gradient, with navy ink and navy pills.
+ * Dark: the same glass over deep slate-teal, with pale mint ink and mint pills.
+ * "accent" = primary ink/pill colour, "delta" = newly stored data.
+ * The slate scale is the text ramp (100 = strongest) in both themes.
+ * "--white" is the overlay colour used for hairlines and hover tints.
  */
 :root,
-html.dark {
-  color-scheme: dark;
-  --white: 255 255 255;
-  --slate-50: 238 243 249;
-  --slate-100: 230 237 246;
-  --slate-200: 214 224 236;
-  --slate-300: 184 198 216;
-  --slate-400: 145 162 187;
-  --slate-500: 122 139 164;
-  --slate-600: 84 99 122;
-  --slate-700: 56 70 92;
-  --ink-950: 12 20 32;
-  --ink-900: 18 28 43;
-  --ink-850: 22 33 50;
-  --ink-800: 26 38 56;
-  --ink-700: 36 50 74;
-  --ink-600: 48 65 94;
-  --accent-300: 127 178 240;
-  --accent-400: 91 155 230;
-  --accent-500: 74 138 220;
-  --accent-600: 52 110 190;
-  --delta-400: 240 169 59;
-  --delta-500: 214 145 40;
-}
-
 html.light {
   color-scheme: light;
-  --white: 18 32 51;
-  --slate-50: 18 32 51;
-  --slate-100: 18 32 51;
-  --slate-200: 30 45 66;
-  --slate-300: 52 68 92;
-  --slate-400: 78 94 118;
-  --slate-500: 96 111 134;
-  --slate-600: 120 134 155;
-  --slate-700: 150 162 180;
-  --ink-950: 244 246 249;
-  --ink-900: 255 255 255;
-  --ink-850: 248 250 252;
-  --ink-800: 238 242 247;
-  --ink-700: 217 224 234;
-  --ink-600: 196 206 220;
-  --accent-300: 30 86 164;
-  --accent-400: 37 99 184;
-  --accent-500: 37 99 184;
-  --accent-600: 25 75 145;
-  --delta-400: 176 104 0;
-  --delta-500: 150 88 0;
+  --white: 30 52 72;
+  --slate-50: 18 34 48;
+  --slate-100: 22 38 54;
+  --slate-200: 30 48 64;
+  --slate-300: 52 70 86;
+  --slate-400: 88 106 118;
+  --slate-500: 106 122 132;
+  --slate-600: 140 154 162;
+  --slate-700: 176 188 194;
+  --ink-950: 232 239 237;
+  --ink-900: 244 248 247;
+  --ink-850: 238 244 242;
+  --ink-800: 226 234 232;
+  --ink-700: 208 219 218;
+  --ink-600: 186 200 200;
+  --accent-300: 30 52 72;
+  --accent-400: 38 64 88;
+  --accent-500: 30 52 72;
+  --accent-600: 20 38 54;
+  --delta-400: 30 52 72;
+  --delta-500: 20 38 54;
+  --on-accent: 244 248 247;
+  --glass: 255 255 255 / 0.5;
+  --glass-strong: 255 255 255 / 0.72;
+  --glass-border: 255 255 255 / 0.75;
+  --shadow-glass: 0 1px 0 rgb(255 255 255 / 0.6) inset, 0 18px 40px -24px rgb(30 52 72 / 0.28);
+  --shadow-pop: 0 1px 0 rgb(255 255 255 / 0.7) inset, 0 24px 48px -20px rgb(30 52 72 / 0.35);
+  --page-bg: linear-gradient(180deg, #9fb1ba 0%, #bccbcf 14%, #dbe6e4 36%, #e8efed 62%, #eef3f1 100%);
+  --hatch: 30 52 72;
+}
+
+html.dark {
+  color-scheme: dark;
+  --white: 220 236 232;
+  --slate-50: 240 247 245;
+  --slate-100: 228 239 236;
+  --slate-200: 210 224 221;
+  --slate-300: 182 199 197;
+  --slate-400: 146 166 168;
+  --slate-500: 120 140 144;
+  --slate-600: 88 106 112;
+  --slate-700: 60 76 82;
+  --ink-950: 13 22 27;
+  --ink-900: 21 33 39;
+  --ink-850: 25 38 45;
+  --ink-800: 30 45 52;
+  --ink-700: 42 58 66;
+  --ink-600: 58 76 85;
+  --accent-300: 214 232 228;
+  --accent-400: 230 242 239;
+  --accent-500: 214 232 228;
+  --accent-600: 190 214 209;
+  --delta-400: 214 232 228;
+  --delta-500: 190 214 209;
+  --on-accent: 16 28 34;
+  --glass: 255 255 255 / 0.045;
+  --glass-strong: 26 40 47 / 0.86;
+  --glass-border: 255 255 255 / 0.08;
+  --shadow-glass: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 20px 44px -26px rgb(0 0 0 / 0.7);
+  --shadow-pop: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 28px 56px -20px rgb(0 0 0 / 0.75);
+  --page-bg: linear-gradient(180deg, #2b3d46 0%, #1c2c33 18%, #121d23 45%, #0d161b 100%);
+  --hatch: 214 232 228;
 }
 
 html,
@@ -66,22 +84,21 @@ body,
 }
 
 body {
-  @apply bg-ink-950 font-sans text-[14px] text-slate-200 antialiased;
-  font-feature-settings: "ss01", "tnum";
+  @apply font-sans text-[14.5px] text-slate-200 antialiased;
+  background-color: rgb(var(--ink-950));
+  background-image: var(--page-bg);
+  background-attachment: fixed;
+  font-feature-settings: "tnum";
 }
 
 h1,
 h2,
 h3 {
-  letter-spacing: -0.015em;
+  letter-spacing: -0.01em;
 }
 
 ::selection {
-  background: rgb(91 155 230 / 0.3);
-}
-
-html.light ::selection {
-  background: rgb(37 99 184 / 0.2);
+  background: rgb(var(--accent-500) / 0.22);
 }
 
 * {
@@ -99,103 +116,128 @@ html.light ::selection {
   border-radius: 999px;
 }
 
-html.light * {
-  scrollbar-color: rgb(var(--ink-600)) transparent;
-}
-
-html.light *::-webkit-scrollbar-thumb {
-  background: rgb(var(--ink-600));
-}
-
-html.light .text-emerald-300 {
+html:not(.dark) .text-emerald-300 {
   color: #047857;
 }
 
-html.light .text-emerald-400 {
+html:not(.dark) .text-emerald-400 {
   color: #059669;
 }
 
-html.light .text-rose-200,
-html.light .text-rose-300 {
+html:not(.dark) .text-rose-200,
+html:not(.dark) .text-rose-300 {
   color: #be123c;
 }
 
-html.light .text-rose-400 {
+html:not(.dark) .text-rose-400 {
   color: #e11d48;
 }
 
-html.light .text-amber-200,
-html.light .text-amber-300 {
+html:not(.dark) .text-amber-200,
+html:not(.dark) .text-amber-300 {
   color: #92400e;
 }
 
-html.light .text-amber-400 {
+html:not(.dark) .text-amber-400 {
   color: #d97706;
 }
 
-html.light .text-sky-300 {
+html:not(.dark) .text-sky-300 {
   color: #0369a1;
 }
 
-html.light .text-sky-400 {
+html:not(.dark) .text-sky-400 {
   color: #0284c7;
 }
 
-html.light .text-violet-300 {
+html:not(.dark) .text-violet-300 {
   color: #6d28d9;
 }
 
 @layer components {
   .glass {
-    @apply border border-white/[0.07] bg-ink-900;
+    @apply border backdrop-blur-xl;
+    background-color: rgb(var(--glass));
+    border-color: rgb(var(--glass-border));
+    box-shadow: var(--shadow-glass);
   }
 
   .hairline {
-    @apply border-b border-white/[0.07];
+    @apply border-b border-white/[0.08];
   }
 
   .input {
-    @apply w-full rounded-md border border-white/10 bg-ink-950 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-accent-400/70 focus-visible:ring-2 focus-visible:ring-accent-400/30;
+    @apply w-full rounded-xl border px-3.5 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-accent-500/40 focus-visible:ring-2 focus-visible:ring-accent-500/15;
+    background-color: rgb(var(--glass-strong));
+    border-color: rgb(var(--white) / 0.1);
   }
 
   .label {
-    @apply mb-1.5 block text-[13px] font-medium text-slate-300;
+    @apply mb-1.5 block text-[13px] font-medium text-slate-400;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply btn bg-accent-500 text-ink-950 hover:bg-accent-400;
+    @apply btn bg-accent-500 hover:bg-accent-400;
+    color: rgb(var(--on-accent));
+    box-shadow: 0 10px 24px -14px rgb(var(--accent-600) / 0.8);
   }
 
   .btn-secondary {
-    @apply btn border border-white/10 bg-white/[0.04] text-slate-200 hover:border-white/20 hover:bg-white/[0.08];
+    @apply btn border text-slate-200 hover:text-slate-100;
+    background-color: rgb(var(--glass-strong));
+    border-color: rgb(var(--glass-border));
+    box-shadow: var(--shadow-glass);
+  }
+
+  .btn-secondary:hover {
+    background-color: rgb(var(--white) / 0.08);
   }
 
   .btn-danger {
-    @apply btn border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20;
+    @apply btn border border-rose-500/25 bg-rose-500/10 text-rose-400 hover:bg-rose-500/15;
   }
 
   .btn-ghost {
-    @apply btn text-slate-400 hover:bg-white/5 hover:text-slate-200;
+    @apply btn text-slate-400 hover:bg-white/[0.06] hover:text-slate-100;
   }
 
   .card {
-    @apply rounded-xl border border-white/[0.07] bg-ink-900;
+    @apply glass rounded-[22px];
   }
 
   .popover {
-    @apply rounded-lg border border-white/10 bg-ink-900 shadow-pop;
+    @apply rounded-2xl border backdrop-blur-2xl;
+    background-color: rgb(var(--glass-strong));
+    border-color: rgb(var(--glass-border));
+    box-shadow: var(--shadow-pop);
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold;
+  }
+
+  .count-pill {
+    @apply inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-accent-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none;
+    color: rgb(var(--on-accent));
+  }
+
+  .icon-tile {
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-2xl border text-slate-300 transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50;
+    background-color: rgb(var(--glass-strong));
+    border-color: rgb(var(--glass-border));
+    box-shadow: var(--shadow-glass);
   }
 
   .num {
-    @apply font-mono tabular-nums;
+    @apply tabular-nums;
+  }
+
+  .figure {
+    @apply font-light tabular-nums tracking-tight text-slate-100;
   }
 }
 
@@ -249,18 +291,23 @@ html.light .text-violet-300 {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, rgb(var(--ink-800)) 25%, rgb(var(--ink-700)) 37%, rgb(var(--ink-800)) 63%);
+  background: linear-gradient(90deg, rgb(var(--white) / 0.06) 25%, rgb(var(--white) / 0.12) 37%, rgb(var(--white) / 0.06) 63%);
   background-size: 200% 100%;
   animation: shimmer 1.4s ease infinite;
 }
 
-html.light .skeleton {
-  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
-  background-size: 200% 100%;
+/* Diagonal hatch used for "already stored" chunks, echoing the hatched charts. */
+.hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(var(--hatch) / 0.2) 0 1.2px,
+    transparent 1.2px 5px
+  );
+  background-color: rgb(var(--hatch) / 0.05);
 }
 
 :focus-visible {
-  outline: 2px solid rgb(var(--accent-400) / 0.7);
+  outline: 2px solid rgb(var(--accent-500) / 0.55);
   outline-offset: 2px;
 }
 

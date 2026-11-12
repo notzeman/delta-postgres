@@ -35,7 +35,7 @@ export default function Login({ onSuccess }: { onSuccess: () => void }) {
       <div className="w-full max-w-sm">
         <div className="mb-8">
           <DeltaMark className="h-10 w-10" />
-          <h1 className="mt-5 text-[28px] font-semibold leading-tight tracking-tight text-slate-100">
+          <h1 className="mt-5 text-[34px] font-light leading-tight tracking-tight text-slate-100">
             Sign in to DeltaPostgres
           </h1>
           <p className="mt-1.5 text-sm text-slate-400">
@@ -76,7 +76,7 @@ export default function Login({ onSuccess }: { onSuccess: () => void }) {
 
         <div className="mt-6 text-[13px] text-slate-500">
           <p>No admin account yet? Create one on the server:</p>
-          <code className="num mt-2 block overflow-x-auto whitespace-nowrap rounded-md border border-white/[0.07] bg-ink-900 px-3 py-2 text-xs text-slate-300">
+          <code className="mt-2 block font-mono overflow-x-auto whitespace-nowrap glass rounded-2xl px-4 py-2.5 text-xs text-slate-300">
             {SETUP_COMMAND}
           </code>
         </div>

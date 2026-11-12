@@ -25,7 +25,7 @@ export default function ChunkStrip({
 
   return (
     <div
-      className={cn("grid gap-[3px]", className)}
+      className={cn("grid gap-1", className)}
       style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
       role="img"
       aria-label={
@@ -38,12 +38,12 @@ export default function ChunkStrip({
         <span
           key={index}
           className={cn(
-            "h-5 rounded-[3px] sm:h-6",
+            "h-7 rounded-md sm:h-8",
             logical === 0
               ? "bg-white/[0.06]"
               : isStored(index)
                 ? "bg-delta-400"
-                : "bg-accent-400/25",
+                : "hatch",
           )}
         />
       ))}

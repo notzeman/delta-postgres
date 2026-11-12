@@ -36,12 +36,13 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Space Grotesk Variable", "Space Grotesk", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["Urbanist Variable", "Urbanist", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       boxShadow: {
         glow: "none",
-        pop: "0 12px 32px -12px rgb(0 0 0 / 0.45), 0 2px 6px -2px rgb(0 0 0 / 0.25)",
+        pop: "var(--shadow-pop)",
+        glass: "var(--shadow-glass)",
       },
     },
   },

@@ -83,7 +83,7 @@ export default function CronField({
         ) : null}
         {mode ? (
           <p className="text-xs text-slate-500">
-            <span className="num">{value || "inherits global schedule"}</span>
+            <span className={value ? "font-mono" : undefined}>{value || "Inherits the global schedule"}</span>
             {timezone ? <> in {timezone}</> : null}
           </p>
         ) : null}

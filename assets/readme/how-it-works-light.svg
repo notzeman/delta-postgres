@@ -1,29 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 290" width="100%" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 310" width="100%" role="img" aria-labelledby="t d">
 <title id="t">How a DeltaPostgres backup runs</title><desc id="d">pg_dump runs inside the container, the dumps are staged with a manifest, Borg creates one encrypted deduplicated archive, then prune and compact apply retention.</desc>
-<rect width="1200" height="290" rx="24" fill="#F4F6F9"/>
-<rect x="40" y="50" width="264" height="190" rx="16" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
-<text x="64" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#2563B8">1</text>
-<text x="64" y="132" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#122033">Dump databases</text>
-<text x="64" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">pg_dumpall -g</text>
-<text x="64" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">pg_dump -Fc -Z 0</text>
-<path d="M310 145.0 H326" stroke="#4E5E76" stroke-width="2"/><path d="M322 138.0 L332 145.0 L322 152.0" fill="none" stroke="#4E5E76" stroke-width="2"/>
-<rect x="332" y="50" width="264" height="190" rx="16" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
-<text x="356" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#2563B8">2</text>
-<text x="356" y="132" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#122033">Stage the run</text>
-<text x="356" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">globals.sql</text>
-<text x="356" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">&lt;db&gt;.dump</text>
-<text x="356" y="234" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">manifest.json</text>
-<path d="M602 145.0 H618" stroke="#4E5E76" stroke-width="2"/><path d="M614 138.0 L624 145.0 L614 152.0" fill="none" stroke="#4E5E76" stroke-width="2"/>
-<rect x="624" y="50" width="264" height="190" rx="16" fill="#FFFFFF" stroke="#B86E00" stroke-width="2"/>
-<text x="648" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#B86E00">3</text>
-<text x="648" y="132" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#122033">Borg archive</text>
-<text x="648" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">borg create</text>
-<text x="648" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">zstd,3</text>
-<text x="648" y="234" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">repokey-blake2</text>
-<path d="M894 145.0 H910" stroke="#4E5E76" stroke-width="2"/><path d="M906 138.0 L916 145.0 L906 152.0" fill="none" stroke="#4E5E76" stroke-width="2"/>
-<rect x="916" y="50" width="264" height="190" rx="16" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
-<text x="940" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#2563B8">4</text>
-<text x="940" y="132" font-family="'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#122033">Apply retention</text>
-<text x="940" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">borg prune</text>
-<text x="940" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4E5E76">borg compact</text>
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B4C3C9"/><stop offset="1" stop-color="#EEF3F1"/></linearGradient></defs><rect width="1200" height="310" rx="28" fill="url(#bg)"/>
+<rect x="40" y="50" width="264" height="210" rx="22" fill="#F6F9F8" fill-opacity="0.7" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="64" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#1E3448">1</text>
+<text x="64" y="132" font-family="'Urbanist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#162636">Dump databases</text>
+<text x="64" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">pg_dumpall -g</text>
+<text x="64" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">pg_dump -Fc -Z 0</text>
+<path d="M310 155.0 H326" stroke="#55687A" stroke-width="2"/><path d="M322 148.0 L332 155.0 L322 162.0" fill="none" stroke="#55687A" stroke-width="2"/>
+<rect x="332" y="50" width="264" height="210" rx="22" fill="#F6F9F8" fill-opacity="0.7" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="356" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#1E3448">2</text>
+<text x="356" y="132" font-family="'Urbanist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#162636">Stage the run</text>
+<text x="356" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">globals.sql</text>
+<text x="356" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">&lt;db&gt;.dump</text>
+<text x="356" y="234" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">manifest.json</text>
+<path d="M602 155.0 H618" stroke="#55687A" stroke-width="2"/><path d="M614 148.0 L624 155.0 L614 162.0" fill="none" stroke="#55687A" stroke-width="2"/>
+<rect x="624" y="50" width="264" height="210" rx="22" fill="#F6F9F8" fill-opacity="0.7" stroke="#1E3448" stroke-width="2"/>
+<text x="648" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#1E3448">3</text>
+<text x="648" y="132" font-family="'Urbanist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#162636">Borg archive</text>
+<text x="648" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">borg create</text>
+<text x="648" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">zstd,3</text>
+<text x="648" y="234" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">repokey-blake2</text>
+<path d="M894 155.0 H910" stroke="#55687A" stroke-width="2"/><path d="M906 148.0 L916 155.0 L906 162.0" fill="none" stroke="#55687A" stroke-width="2"/>
+<rect x="916" y="50" width="264" height="210" rx="22" fill="#F6F9F8" fill-opacity="0.7" stroke="#FFFFFF" stroke-width="1.5"/>
+<text x="940" y="94" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#1E3448">4</text>
+<text x="940" y="132" font-family="'Urbanist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#162636">Apply retention</text>
+<text x="940" y="174" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">borg prune</text>
+<text x="940" y="204" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#55687A">borg compact</text>
 </svg>
