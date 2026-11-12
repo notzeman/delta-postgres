@@ -21,6 +21,7 @@ import {
   listArchives,
   archiveInfo,
   repoSizeBytes,
+  invalidateRepoSize,
 } from "./borg";
 import { getServer } from "./servers";
 import {
@@ -340,7 +341,8 @@ async function executeBackup(job: BackupJob, project: Project): Promise<void> {
          last_error = NULL, updated_at = now() WHERE id = $1`,
       [project.id],
     );
-    log(`Backup completed. Repo size: ${(repoSizeBytes(project) / 1024 / 1024).toFixed(1)} MB`);
+    invalidateRepoSize(project);
+    log(`Backup completed. Repo size: ${((await repoSizeBytes(project)) / 1024 / 1024).toFixed(1)} MB`);
   } finally {
     rmrf(staging);
   }

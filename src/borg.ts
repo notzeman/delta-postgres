@@ -9,6 +9,7 @@ import {
   ensureDir,
   fileExists,
   dirSizeBytes,
+  invalidateDirSize,
   parseJsonSafe,
   rmrf,
 } from "./utils";
@@ -401,8 +402,12 @@ export async function extractArchiveFile(
   }
 }
 
-export function repoSizeBytes(project: Project): number {
+export async function repoSizeBytes(project: Project): Promise<number> {
   return dirSizeBytes(projectBackupDir(project));
+}
+
+export function invalidateRepoSize(project: Project): void {
+  invalidateDirSize(projectBackupDir(project));
 }
 
 export async function restoreDatabase(

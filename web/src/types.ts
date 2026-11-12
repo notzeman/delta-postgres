@@ -174,7 +174,6 @@ export interface Health {
 export interface Stats {
   serverId?: number | null;
   projects: { total: number; enabled: number; failing: number };
-  repoBytes: number;
   archives: number;
   originalBytes: number;
   deduplicatedBytes: number;

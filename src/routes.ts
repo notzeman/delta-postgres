@@ -51,6 +51,7 @@ import { encryptSecret } from "./secrets";
 import {
   borgVersion,
   repoSizeBytes,
+  invalidateRepoSize,
   projectBackupDir,
   listArchiveFiles,
   listArchives,
@@ -488,46 +489,46 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const projects = await getProjects(serverId);
     const projectIds = projects.map((p) => p.id);
     const filterIds = serverId ? projectIds : null;
-    const allJobs = await getJobs(200);
+    const [allJobs, totals, lastSuccess, last24, series] = await Promise.all([
+      getJobs(200),
+      pool.query<{
+        archives: string;
+        original: string;
+        deduplicated: string;
+        compressed: string;
+      }>(
+        `SELECT count(*)::text AS archives,
+                COALESCE(sum(original_size), 0)::text AS original,
+                COALESCE(sum(deduplicated_size), 0)::text AS deduplicated,
+                COALESCE(sum(size_bytes), 0)::text AS compressed
+         FROM archives
+         WHERE ($1::int[] IS NULL OR project_id = ANY($1::int[]))`,
+        [filterIds],
+      ),
+      pool.query<{ at: string | null }>(
+        `SELECT max(finished_at) AS at FROM backup_jobs
+         WHERE status = 'success'
+           AND ($1::int[] IS NULL OR project_id = ANY($1::int[]))`,
+        [filterIds],
+      ),
+      pool.query<{ status: string; count: string }>(
+        `SELECT status, count(*)::text AS count FROM backup_jobs
+         WHERE created_at > now() - interval '24 hours'
+           AND ($1::int[] IS NULL OR project_id = ANY($1::int[]))
+         GROUP BY status`,
+        [filterIds],
+      ),
+      pool.query(
+        `SELECT a.name, a.created_at, a.original_size, a.deduplicated_size, p.name AS project
+         FROM archives a JOIN projects p ON p.id = a.project_id
+         WHERE ($1::int[] IS NULL OR a.project_id = ANY($1::int[]))
+         ORDER BY a.created_at DESC NULLS LAST LIMIT 30`,
+        [filterIds],
+      ),
+    ]);
     const jobs = allJobs
       .filter((job) => !serverId || projectIds.includes(job.project_id))
       .slice(0, 12);
-    const totals = await pool.query<{
-      archives: string;
-      original: string;
-      deduplicated: string;
-      compressed: string;
-    }>(
-      `SELECT count(*)::text AS archives,
-              COALESCE(sum(original_size), 0)::text AS original,
-              COALESCE(sum(deduplicated_size), 0)::text AS deduplicated,
-              COALESCE(sum(size_bytes), 0)::text AS compressed
-       FROM archives
-       WHERE ($1::int[] IS NULL OR project_id = ANY($1::int[]))`,
-      [filterIds],
-    );
-    let repoBytes = 0;
-    for (const project of projects) repoBytes += repoSizeBytes(project);
-    const lastSuccess = await pool.query<{ at: string | null }>(
-      `SELECT max(finished_at) AS at FROM backup_jobs
-       WHERE status = 'success'
-         AND ($1::int[] IS NULL OR project_id = ANY($1::int[]))`,
-      [filterIds],
-    );
-    const last24 = await pool.query<{ status: string; count: string }>(
-      `SELECT status, count(*)::text AS count FROM backup_jobs
-       WHERE created_at > now() - interval '24 hours'
-         AND ($1::int[] IS NULL OR project_id = ANY($1::int[]))
-       GROUP BY status`,
-      [filterIds],
-    );
-    const series = await pool.query(
-      `SELECT a.name, a.created_at, a.original_size, a.deduplicated_size, p.name AS project
-       FROM archives a JOIN projects p ON p.id = a.project_id
-       WHERE ($1::int[] IS NULL OR a.project_id = ANY($1::int[]))
-       ORDER BY a.created_at DESC NULLS LAST LIMIT 30`,
-      [filterIds],
-    );
     return {
       serverId: serverId || null,
       projects: {
@@ -535,7 +536,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         enabled: projects.filter((p) => p.enabled).length,
         failing: projects.filter((p) => p.last_status === "failed").length,
       },
-      repoBytes,
       archives: Number(totals.rows[0]?.archives || 0),
       originalBytes: Number(totals.rows[0]?.original || 0),
       deduplicatedBytes: Number(totals.rows[0]?.deduplicated || 0),
@@ -545,6 +545,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       recentJobs: jobs,
       storageSeries: series.rows.reverse(),
     };
+  });
+
+  app.get("/api/stats/repo-size", async (request) => {
+    const serverId = queryServerId(request);
+    const projects = await getProjects(serverId);
+    const sizes = await Promise.all(projects.map((project) => repoSizeBytes(project)));
+    return { repoBytes: sizes.reduce((total, size) => total + size, 0) };
   });
 
   // ---------- Discovery ----------
@@ -695,37 +702,43 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const servers = await listServers();
     const serverMap = new Map(servers.map((server) => [server.id, server]));
     const containersByServer = new Map<number, any[]>();
-    for (const id of new Set(projects.map((project) => project.server_id))) {
-      const server = serverMap.get(id);
-      if (!server) continue;
-      containersByServer.set(id, await listAllContainers(server).catch(() => []));
-    }
-    const result = [];
-    for (const project of projects) {
-      const containers = containersByServer.get(project.server_id) || [];
-      const byId = new Map(containers.map((c) => [c.id, c]));
-      const byName = new Map(containers.map((c) => [c.name, c]));
-      const container =
-        (project.container_id ? byId.get(project.container_id) : undefined) ||
-        (project.container_name ? byName.get(project.container_name) : undefined);
-      const archives = await pool.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM archives WHERE project_id = $1`,
-        [project.id],
-      );
-      const lastJob = await pool.query(
-        `SELECT id, status, trigger, started_at, finished_at, error, size_bytes
-         FROM backup_jobs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
-        [project.id],
-      );
-      result.push({
-        ...project,
-        repoBytes: repoSizeBytes(project),
-        archiveCount: Number(archives.rows[0]?.count || 0),
-        containerState: container?.state || "missing",
-        containerImage: container?.image || project.container_image,
-        lastJob: lastJob.rows[0] || null,
-      });
-    }
+    await Promise.all(
+      [...new Set(projects.map((project) => project.server_id))].map(async (id) => {
+        const server = serverMap.get(id);
+        if (!server) return;
+        containersByServer.set(id, await listAllContainers(server).catch(() => []));
+      }),
+    );
+    const result = await Promise.all(
+      projects.map(async (project) => {
+        const containers = containersByServer.get(project.server_id) || [];
+        const byId = new Map(containers.map((c) => [c.id, c]));
+        const byName = new Map(containers.map((c) => [c.name, c]));
+        const container =
+          (project.container_id ? byId.get(project.container_id) : undefined) ||
+          (project.container_name ? byName.get(project.container_name) : undefined);
+        const [archives, lastJob, repoBytes] = await Promise.all([
+          pool.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM archives WHERE project_id = $1`,
+            [project.id],
+          ),
+          pool.query(
+            `SELECT id, status, trigger, started_at, finished_at, error, size_bytes
+             FROM backup_jobs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
+            [project.id],
+          ),
+          repoSizeBytes(project),
+        ]);
+        return {
+          ...project,
+          repoBytes,
+          archiveCount: Number(archives.rows[0]?.count || 0),
+          containerState: container?.state || "missing",
+          containerImage: container?.image || project.container_image,
+          lastJob: lastJob.rows[0] || null,
+        };
+      }),
+    );
     return { projects: result };
   });
 
@@ -852,7 +865,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       /* container may be missing */
     }
     return {
-      project: { ...resolvedProject, repoBytes: repoSizeBytes(resolvedProject) },
+      project: { ...resolvedProject, repoBytes: await repoSizeBytes(resolvedProject) },
       server: server ? toPublicServer(server) : null,
       archives,
       jobs: jobs.rows,
@@ -1169,6 +1182,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const name = archiveName(request);
     try {
       await deleteArchive(project, name);
+      invalidateRepoSize(project);
       await pool.query(`DELETE FROM archives WHERE project_id = $1 AND name = $2`, [
         project.id,
         name,
@@ -1495,6 +1509,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         rmrf(tempDir);
         await syncProjectArchives(project);
       }
+      invalidateRepoSize(project);
       await audit(getActor(request), "import", project.slug, { mode, archive: archiveNameValue });
       return { ok: true, output: lines.join("\n") };
     } catch (error) {
@@ -1624,6 +1639,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
           stats.fileCount,
         ],
       );
+      invalidateRepoSize(project);
       await audit(getActor(request), "import.dump", project.slug, {
         archiveName,
         database,

@@ -126,6 +126,11 @@ export default function Dashboard() {
     queryFn: () => api<{ projects: Project[] }>(`/projects${serverQuery}`),
     refetchInterval: 20_000,
   });
+  const repoSizeQuery = useQuery({
+    queryKey: ["repo-size", serverFilter],
+    queryFn: () => api<{ repoBytes: number }>(`/stats/repo-size${serverQuery}`),
+    refetchInterval: 60_000,
+  });
   const serversQuery = useQuery({
     queryKey: ["servers"],
     queryFn: () => api<{ servers: DockerServer[] }>("/servers"),
@@ -148,6 +153,7 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["repo-size"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -157,6 +163,7 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["repo-size"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -174,7 +181,8 @@ export default function Dashboard() {
   }));
 
   const failing = projects.filter((project) => project.last_status === "failed");
-  const loading = statsQuery.isLoading || projectsQuery.isLoading;
+  const statsLoading = statsQuery.isLoading;
+  const projectsLoading = projectsQuery.isLoading;
 
   const colors = useChartColors();
   const logicalBytes = stats?.originalBytes ?? 0;
@@ -193,7 +201,7 @@ export default function Dashboard() {
             <h2 id="ledger-title" className="text-[13px] font-medium text-slate-400">
               Deduplication across every archive
             </h2>
-            {loading ? (
+            {statsLoading ? (
               <Skeleton className="mt-3 h-10 w-56" />
             ) : (
               <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -248,7 +256,7 @@ export default function Dashboard() {
         </div>
 
         <div className="px-5 sm:px-6">
-          <ChunkStrip logical={loading ? 0 : logicalBytes} stored={storedBytes} count={40} />
+          <ChunkStrip logical={statsLoading ? 0 : logicalBytes} stored={storedBytes} count={40} />
           <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
             <span className="flex items-center gap-1.5">
               <span className="hatch h-3 w-3 rounded" /> Already in the repository
@@ -263,14 +271,14 @@ export default function Dashboard() {
           <LedgerStat
             icon={<Database className="h-4 w-4" />}
             label="Projects"
-            loading={loading}
+            loading={statsLoading}
             value={stats?.projects.total ?? 0}
             hint={`${stats?.projects.enabled ?? 0} enabled, ${stats?.projects.failing ?? 0} failing`}
           />
           <LedgerStat
             icon={<ShieldCheck className="h-4 w-4" />}
             label="Last successful backup"
-            loading={loading}
+            loading={statsLoading}
             value={stats?.lastSuccessAt ? timeAgo(stats.lastSuccessAt) : "Never"}
             hint={
               stats?.last24?.success
@@ -281,8 +289,8 @@ export default function Dashboard() {
           <LedgerStat
             icon={<HardDrive className="h-4 w-4" />}
             label="Repository size"
-            loading={loading}
-            value={formatBytes(stats?.repoBytes)}
+            loading={repoSizeQuery.isLoading}
+            value={formatBytes(repoSizeQuery.data?.repoBytes)}
             hint={`${stats?.archives ?? 0} archives on disk`}
           />
         </dl>
@@ -314,13 +322,7 @@ export default function Dashboard() {
         </div>
       ) : null}
 
-      {loading ? (
-        <Card>
-          <SkeletonRows rows={5} label="Loading projects" />
-        </Card>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
             <Card className="xl:col-span-2">
               <CardHeader
                 title="Managed projects"
@@ -331,7 +333,9 @@ export default function Dashboard() {
                   </Link>
                 }
               />
-              {projects.length === 0 ? (
+              {projectsLoading ? (
+                <SkeletonRows rows={5} label="Loading projects" />
+              ) : projects.length === 0 ? (
                 <EmptyState
                   icon={<Database className="h-8 w-8" />}
                   title="No projects yet"
@@ -405,7 +409,9 @@ export default function Dashboard() {
                   subtitle="Size of each dump compared with the new data Borg stored"
                 />
                 <div className="h-60 px-2 py-4">
-                  {chartData.length > 0 ? (
+                  {statsLoading ? (
+                    <Skeleton className="h-full w-full" />
+                  ) : chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                         <defs>
@@ -463,8 +469,11 @@ export default function Dashboard() {
                     </Link>
                   }
                 />
-                <div className="divide-y divide-white/5">
-                  {(stats?.recentJobs || []).slice(0, 6).map((job) => (
+                {statsLoading ? (
+                  <SkeletonRows rows={3} label="Loading activity" />
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {(stats?.recentJobs || []).slice(0, 6).map((job) => (
                     <div key={job.id} className="flex items-center justify-between gap-3 px-5 py-3">
                       <div className="min-w-0">
                         <p className="truncate text-xs font-medium text-slate-200">
@@ -477,16 +486,14 @@ export default function Dashboard() {
                       <StatusBadge status={job.status} />
                     </div>
                   ))}
-                  {(stats?.recentJobs || []).length === 0 ? (
-                    <EmptyState title="No jobs yet" description="Manual or scheduled backups will appear here." />
-                  ) : null}
-                </div>
+                    {(stats?.recentJobs || []).length === 0 ? (
+                      <EmptyState title="No jobs yet" description="Manual or scheduled backups will appear here." />
+                    ) : null}
+                  </div>
+                )}
               </Card>
             </div>
-          </div>
-
-        </>
-      )}
+      </div>
     </div>
   );
 }

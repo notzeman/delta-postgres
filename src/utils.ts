@@ -117,18 +117,58 @@ export function fileSize(file: string): number {
   }
 }
 
-export function dirSizeBytes(dir: string): number {
-  let total = 0;
+const DIR_SIZE_TTL_MS = 60_000;
+const dirSizeCache = new Map<string, { size: number; expiresAt: number }>();
+const dirSizeInflight = new Map<string, Promise<number>>();
+
+async function computeDirSize(dir: string): Promise<number> {
+  let entries: fs.Dirent[];
   try {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) total += dirSizeBytes(full);
-      else if (entry.isFile()) total += fileSize(full);
-    }
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
-    /* ignore */
+    return 0;
+  }
+  let total = 0;
+  for (let index = 0; index < entries.length; index += 32) {
+    const batch = entries.slice(index, index + 32);
+    const sizes = await Promise.all(
+      batch.map(async (entry) => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) return computeDirSize(full);
+        if (entry.isFile()) {
+          try {
+            return (await fs.promises.stat(full)).size;
+          } catch {
+            return 0;
+          }
+        }
+        return 0;
+      }),
+    );
+    for (const size of sizes) total += size;
   }
   return total;
+}
+
+export async function dirSizeBytes(dir: string): Promise<number> {
+  const cached = dirSizeCache.get(dir);
+  if (cached && cached.expiresAt > Date.now()) return cached.size;
+  const pending = dirSizeInflight.get(dir);
+  if (pending) return pending;
+  const promise = computeDirSize(dir)
+    .then((size) => {
+      dirSizeCache.set(dir, { size, expiresAt: Date.now() + DIR_SIZE_TTL_MS });
+      return size;
+    })
+    .finally(() => {
+      dirSizeInflight.delete(dir);
+    });
+  dirSizeInflight.set(dir, promise);
+  return promise;
+}
+
+export function invalidateDirSize(dir: string): void {
+  dirSizeCache.delete(dir);
 }
 
 export function hashFile(file: string): Promise<string> {
