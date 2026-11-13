@@ -191,6 +191,8 @@ Imported archives keep their original timestamps and are subject to retention. I
 
 Schedules, timezone, concurrency, retention, the notification webhook and auto-add are set on the dashboard's **Settings** page. The `.env` file holds secrets and ports only.
 
+Each project's **Settings → Schedule** dropdown also includes **Disabled (no backups)**. Selecting it disables the project, clears its next run, and cancels any queued backups. Pick a schedule or **Inherit global schedule** to re-enable it.
+
 | Variable | Required | Purpose | Generate |
 |---|---|---|---|
 | `SESSION_SECRET` | Yes | Signs login cookies. Rotating it signs everyone out. | `openssl rand -hex 32` |

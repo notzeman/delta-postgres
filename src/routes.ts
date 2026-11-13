@@ -1004,15 +1004,20 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (body.scheduleCron && computeNextRun(body.scheduleCron, new Date(), timezone) === null) {
       return sendError(reply, 400, "Invalid cron expression");
     }
-    const nextRun = body.scheduleCron
-      ? computeNextRun(body.scheduleCron, new Date(), timezone)
-      : body.scheduleCron === null
-        ? computeNextRun(
-            String(settings.globalCron || config.defaultCron),
-            new Date(),
-            timezone,
-          )
-        : project.next_run_at;
+    const willBeEnabled = body.enabled === undefined ? project.enabled : body.enabled;
+    const effectiveCron =
+      (body.scheduleCron === undefined ? project.schedule_cron : body.scheduleCron) ||
+      String(settings.globalCron || config.defaultCron);
+    let nextRun: string | Date | null = project.next_run_at;
+    if (!willBeEnabled) {
+      // A disabled project must never be picked up by the scheduler.
+      nextRun = null;
+    } else if (body.scheduleCron !== undefined) {
+      nextRun = computeNextRun(effectiveCron, new Date(), timezone);
+    } else if (body.enabled === true && !project.enabled) {
+      // Re-enabling without changing the schedule: start from the next occurrence.
+      nextRun = computeNextRun(effectiveCron, new Date(), timezone);
+    }
 
     const { rows } = await pool.query<Project>(
       `UPDATE projects SET
@@ -1044,6 +1049,14 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         project.id,
       ],
     );
+    if (!willBeEnabled && project.enabled) {
+      // Do not let an already-queued backup start after the project is disabled.
+      const pending = await pool.query<{ id: number }>(
+        `SELECT id FROM backup_jobs WHERE project_id = $1 AND status = 'queued'`,
+        [project.id],
+      );
+      for (const row of pending.rows) cancelJob(row.id);
+    }
     const ignoreKey = project.compose_project || project.container_name;
     if (body.ignored === false) {
       if (ignoreKey) {

@@ -16,6 +16,7 @@ export const CRON_PRESETS = [
 ];
 
 const CUSTOM = "__custom__";
+export const CRON_DISABLED = "__disabled__";
 
 export default function CronField({
   value,
@@ -24,6 +25,9 @@ export default function CronField({
   allowInherit = false,
   inheritLabel = "Inherit global schedule",
   hint,
+  disabled = false,
+  allowDisable = false,
+  disabledLabel = "Disabled (no backups)",
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -31,6 +35,9 @@ export default function CronField({
   allowInherit?: boolean;
   inheritLabel?: string;
   hint?: string;
+  disabled?: boolean;
+  allowDisable?: boolean;
+  disabledLabel?: string;
 }) {
   const match = CRON_PRESETS.find((preset) => preset.value === value);
   const health = useQuery({
@@ -40,15 +47,17 @@ export default function CronField({
   });
   const timezone = health.data?.timezone;
   const [mode, setMode] = useState<string>(() => {
+    if (disabled && allowDisable) return CRON_DISABLED;
     if (!value && allowInherit) return "";
     return match ? match.value : value ? CUSTOM : allowInherit ? "" : CRON_PRESETS[3].value;
   });
 
   useEffect(() => {
-    if (!value && allowInherit) setMode("");
+    if (disabled && allowDisable) setMode(CRON_DISABLED);
+    else if (!value && allowInherit) setMode("");
     else if (match) setMode(match.value);
     else if (value) setMode(CUSTOM);
-  }, [value, allowInherit, match]);
+  }, [value, allowInherit, match, disabled, allowDisable]);
 
   return (
     <Field label={label} hint={hint}>
@@ -57,11 +66,22 @@ export default function CronField({
           value={mode}
           onChange={(next) => {
             setMode(next);
-            if (next === "") onChange("");
+            if (next === CRON_DISABLED) onChange(CRON_DISABLED);
+            else if (next === "") onChange("");
             else if (next !== CUSTOM) onChange(next);
             else if (!value || match) onChange("0 2 * * *");
+            else onChange(value);
           }}
           options={[
+            ...(allowDisable
+              ? [
+                  {
+                    value: CRON_DISABLED,
+                    label: disabledLabel,
+                    description: "Stop scheduled backups for this project",
+                  },
+                ]
+              : []),
             ...(allowInherit ? [{ value: "", label: inheritLabel }] : []),
             ...CRON_PRESETS.map((preset) => ({
               value: preset.value,
@@ -81,7 +101,12 @@ export default function CronField({
             className="font-mono"
           />
         ) : null}
-        {mode ? (
+        {mode === CRON_DISABLED ? (
+          <p className="text-xs text-slate-500">
+            Scheduled and manual backups are disabled for this project. Choose a schedule to
+            re-enable them.
+          </p>
+        ) : mode ? (
           <p className="text-xs text-slate-500">
             <span className={value ? "font-mono" : undefined}>{value || "Inherits the global schedule"}</span>
             {timezone ? <> in {timezone}</> : null}

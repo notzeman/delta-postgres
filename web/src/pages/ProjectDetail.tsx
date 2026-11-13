@@ -40,7 +40,7 @@ import {
   Textarea,
   cn,
 } from "../components/ui";
-import CronField from "../components/CronField";
+import CronField, { CRON_DISABLED } from "../components/CronField";
 import Picker from "../components/Picker";
 import Tooltip from "../components/Tooltip";
 import ConfirmModal from "../components/ConfirmModal";
@@ -687,8 +687,10 @@ export default function ProjectDetail() {
               />
               <DetailStat
                 label="Schedule"
-                value={project.schedule_cron || "Global default"}
-                hint={`Next ${timeAgo(project.next_run_at)}`}
+                value={
+                  !project.enabled ? "Disabled" : project.schedule_cron || "Global default"
+                }
+                hint={project.enabled ? `Next ${timeAgo(project.next_run_at)}` : "No backups"}
               />
               <DetailStat
                 label="Last backup"
@@ -1285,7 +1287,15 @@ export default function ProjectDetail() {
               </Field>
               <CronField
                 value={form.scheduleCron}
-                onChange={(value) => setForm((f) => ({ ...f, scheduleCron: value }))}
+                disabled={!form.enabled}
+                allowDisable
+                onChange={(value) => {
+                  if (value === CRON_DISABLED) {
+                    setForm((f) => ({ ...f, enabled: false }));
+                  } else {
+                    setForm((f) => ({ ...f, enabled: true, scheduleCron: value }));
+                  }
+                }}
                 allowInherit
               />
               <div className="grid gap-4 sm:grid-cols-3">

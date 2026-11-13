@@ -684,7 +684,9 @@ export default function Projects() {
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500">Next run</p>
-                    <p className="mt-0.5 text-slate-200">{timeAgo(project.next_run_at)}</p>
+                    <p className="mt-0.5 text-slate-200">
+                      {project.enabled ? timeAgo(project.next_run_at) : "—"}
+                    </p>
                   </div>
                 </div>
 
@@ -696,7 +698,9 @@ export default function Projects() {
                   <Badge tone="blue">{project.server_name || "local"}</Badge>
                   <Badge tone="neutral">
                     <Sparkles className="h-3 w-3" />
-                    {project.schedule_cron || "global schedule"}
+                    {!project.enabled
+                      ? "disabled"
+                      : project.schedule_cron || "global schedule"}
                   </Badge>
                   {project.source === "auto" ? <Badge tone="violet">auto</Badge> : null}
                   {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
