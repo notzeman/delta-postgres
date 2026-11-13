@@ -35,7 +35,6 @@ import {
   Spinner,
   StatusBadge,
   SuccessBox,
-  Switch,
   Tabs,
   Textarea,
   cn,
@@ -1375,12 +1374,6 @@ export default function ProjectDetail() {
                   onChange={(event) => setForm((f) => ({ ...f, notes: event.target.value }))}
                 />
               </Field>
-              <Switch
-                checked={form.enabled}
-                onChange={(checked) => setForm((f) => ({ ...f, enabled: checked }))}
-                label="Enable scheduled backups"
-                description="The project will be included in the global or custom schedule."
-              />
               <div className="flex justify-end">
                 <Button type="submit" variant="primary" loading={saveSettings.isPending}>
                   <Save className="h-4 w-4" /> Save settings
