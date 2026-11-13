@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,6 +18,7 @@ import {
   Cell,
   Pie,
   PieChart,
+  Sector,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -172,31 +173,35 @@ const StorageChart = React.memo(function StorageChart({ data }: { data: ChartPoi
 
 type PieSlice = { name: string; value: number; color: string };
 
-function StorageTooltip({ active, payload, total }: any) {
-  if (!active || !payload?.length) return null;
-  const slice = payload[0].payload as PieSlice;
-  const percent = total ? Math.round((slice.value / total) * 100) : 0;
-  return (
-    <div className="rounded-2xl border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-3.5 py-2.5 text-[13px] shadow-pop backdrop-blur-xl">
-      <p className="font-semibold text-slate-100">{slice.name}</p>
-      <p className="text-slate-400">
-        <span className="num font-semibold text-slate-100">{formatBytes(slice.value)}</span>
-        <span className="ml-1.5 text-slate-500">· {percent}%</span>
-      </p>
-    </div>
-  );
+// Module-level so the reference stays stable across renders (an inline function would remount slices on every mouse move).
+function renderActiveSlice(props: any) {
+  return <Sector {...props} outerRadius={props.outerRadius + 6} style={{ filter: "brightness(1.15)" }} />;
 }
 
 /**
- * Whole-volume donut: what Borg holds, what else uses the disk, and what is free.
- * Standalone (no card) so it sits directly in the empty space under the activity list.
+ * Whole-volume donut: Borg's share, other used space, and free space.
+ * Hover highlights a slice and shows its percentage in a glass chip that follows
+ * the cursor. The chip moves via a direct DOM update, not a re-render, so tracking stays smooth.
  */
 function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
   const used = slices.slice(0, 2).reduce((sum, slice) => sum + slice.value, 0);
   const borg = slices[0]?.value ?? 0;
-  const tooltip = useMemo(() => <StorageTooltip total={total} />, [total]);
+  const [hovered, setHovered] = useState<number | null>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const hoveredSlice = hovered === null ? null : slices[hovered];
+  const percent = hoveredSlice && total ? Math.round((hoveredSlice.value / total) * 100) : 0;
+
   return (
-    <div className="relative mx-auto h-[240px] w-full max-w-[240px]">
+    <div
+      className="relative mx-auto h-[240px] w-full max-w-[240px]"
+      onMouseMove={(event) => {
+        const tip = tipRef.current;
+        if (!tip) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        tip.style.transform = `translate(${event.clientX - rect.left + 14}px, ${event.clientY - rect.top + 14}px)`;
+      }}
+      onMouseLeave={() => setHovered(null)}
+    >
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
@@ -210,14 +215,27 @@ function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
             stroke="none"
             paddingAngle={slices.every((slice) => slice.value > 0) ? 2 : 0}
             isAnimationActive={false}
+            activeIndex={hovered ?? undefined}
+            activeShape={renderActiveSlice}
+            onMouseEnter={(_: unknown, index: number) => setHovered(index)}
+            onMouseLeave={() => setHovered(null)}
           >
             {slices.map((slice) => (
               <Cell key={slice.name} fill={slice.color} />
             ))}
           </Pie>
-          <Tooltip content={tooltip} isAnimationActive={false} wrapperStyle={{ outline: "none", zIndex: 10 }} />
         </PieChart>
       </ResponsiveContainer>
+
+      <div
+        ref={tipRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0 top-0 z-10 rounded-full border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-2.5 py-1 text-[12px] font-semibold text-slate-100 shadow-pop backdrop-blur-xl transition-opacity duration-150"
+        style={{ opacity: hoveredSlice ? 1 : 0, transition: "opacity 150ms ease-out, transform 140ms cubic-bezier(0.32, 0.72, 0, 1)" }}
+      >
+        {percent}%
+      </div>
+
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
         <span className="figure text-2xl">{formatBytes(total)}</span>
         <span className="mt-0.5 text-[12px] text-slate-400">

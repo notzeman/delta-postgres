@@ -553,7 +553,7 @@ function ProjectCard({
         </p>
       ) : null}
 
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/5 pt-4">
+      <div className="mt-auto flex items-center justify-between gap-2 pt-4">
         {/* Icon-only until the card is hovered or focused; the label then slides open.
             Touch screens (no hover) always show it. */}
         <button
