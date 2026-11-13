@@ -118,6 +118,7 @@ curl -s http://127.0.0.1:8095/api/health | jq
 - Compose projects without PostgreSQL are listed under **Detected → Other Compose projects**.
 - **Add project** onboards a container the scan missed, with live detection of its databases and user.
 - The trash button **moves a project to Ignored**. Its archives, jobs and Borg repo are kept, and later scans won't re-add it. Restore it from **Ignored**.
+- Projects with backups turned off appear under the **Disabled** tab. Use the power button on a project card, or the **Disabled (no backups)** schedule option, to toggle them.
 - Turn off auto-add in **Settings → Global defaults**.
 
 Opt a container out of discovery with a label:

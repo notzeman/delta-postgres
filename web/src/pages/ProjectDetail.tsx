@@ -595,7 +595,7 @@ export default function ProjectDetail() {
             <h2 className="text-2xl font-semibold tracking-tight text-slate-100">{project.name}</h2>
             <StatusBadge status={project.last_status} />
             {project.ignored ? <Badge tone="neutral">ignored</Badge> : null}
-            {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
+            {!project.enabled ? <Badge tone="red">disabled</Badge> : null}
           </div>
           <p className="mt-1 text-sm text-slate-500">
             {project.server_name || "local"} · {project.container_name || "no container"} ·{" "}

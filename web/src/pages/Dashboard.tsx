@@ -469,7 +469,7 @@ export default function Dashboard() {
                             {project.name}
                           </p>
                           <StatusBadge status={project.last_status} />
-                          {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
+                          {!project.enabled ? <Badge tone="red">disabled</Badge> : null}
                         </div>
                         <p className="mt-1 truncate text-xs text-slate-500">
                           {project.server_name || "local"} · {project.container_name || "no container"} ·{" "}

@@ -560,7 +560,7 @@ export default function Servers() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-sm font-semibold text-slate-100">{server.name}</h3>
-                        {!server.enabled ? <Badge tone="neutral">disabled</Badge> : null}
+                        {!server.enabled ? <Badge tone="red">disabled</Badge> : null}
                       </div>
                       <p className="mt-0.5 font-mono text-[11px] text-slate-500">
                         {address(server)}

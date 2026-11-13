@@ -12,11 +12,13 @@ export function cn(...parts: Array<string | false | null | undefined>): string {
 export function Card({
   className,
   children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return <div className={cn("card", className)}>{children}</div>;
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div {...props} className={cn("card", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function CardHeader({
@@ -85,12 +87,12 @@ export function Badge({
   className?: string;
 }) {
   const tones: Record<string, string> = {
-    green: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-    red: "border-rose-500/25 bg-rose-500/10 text-rose-300",
-    amber: "border-amber-500/25 bg-amber-500/10 text-amber-300",
-    blue: "border-sky-500/25 bg-sky-500/10 text-sky-300",
-    violet: "border-violet-500/25 bg-violet-500/10 text-violet-300",
-    neutral: "border-white/10 bg-white/5 text-slate-300",
+    green: "chip-green text-emerald-300",
+    red: "chip-red text-rose-300",
+    amber: "chip-amber text-amber-300",
+    blue: "chip-blue text-sky-300",
+    violet: "chip-violet text-violet-300",
+    neutral: "chip-neutral text-slate-300",
   };
   return <span className={cn("chip", tones[tone], className)}>{children}</span>;
 }

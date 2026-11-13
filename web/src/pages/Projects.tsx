@@ -1,13 +1,15 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Check,
   Database,
   EyeOff,
+  Loader2,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Server,
   ShieldQuestion,
@@ -452,6 +454,167 @@ function AddProjectModal({
   );
 }
 
+function ProjectCard({
+  project,
+  onBackup,
+  onToggleDisabled,
+  onIgnore,
+  backupPending,
+  togglePending,
+}: {
+  project: Project;
+  onBackup: () => void;
+  onToggleDisabled: () => void;
+  onIgnore: () => void;
+  backupPending: boolean;
+  togglePending: boolean;
+}) {
+  const navigate = useNavigate();
+  const openProject = () => navigate(`/projects/${project.id}`);
+
+  return (
+    <Card
+      className={cn(
+        "group flex cursor-pointer flex-col p-5 transition duration-200 hover:-translate-y-0.5 hover:border-accent-500/25",
+        "hover:shadow-[0_20px_44px_-28px_rgba(0,0,0,0.7),0_0_26px_-14px_rgba(214,232,228,0.35)]",
+        !project.enabled && "border-rose-500/20",
+      )}
+      onClick={openProject}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openProject();
+        }
+      }}
+      role="link"
+      tabIndex={0}
+      aria-label={`Open ${project.name}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Link
+            to={`/projects/${project.id}`}
+            onClick={(event) => event.stopPropagation()}
+            className="truncate text-sm font-semibold text-slate-100 transition hover:text-accent-300"
+          >
+            {project.name}
+          </Link>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {project.container_name || "no container"}
+          </p>
+        </div>
+        <StatusBadge status={project.last_status} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+        <div>
+          <p className="text-xs font-medium text-slate-500">Repo size</p>
+          <p className="mt-0.5 text-slate-200">{formatBytes(project.repoBytes)}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-500">Archives</p>
+          <p className="mt-0.5 text-slate-200">{project.archiveCount ?? 0}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-500">Last backup</p>
+          <p className="mt-0.5 text-slate-200">{timeAgo(project.last_backup_at)}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-slate-500">Next run</p>
+          <p className="mt-0.5 text-slate-200">
+            {project.enabled ? timeAgo(project.next_run_at) : "—"}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Badge tone={project.containerState === "running" ? "green" : "amber"}>
+          <Server className="h-3 w-3" />
+          {project.containerState || "unknown"}
+        </Badge>
+        <Badge tone="blue">{project.server_name || "local"}</Badge>
+        {project.enabled ? (
+          <Badge tone="neutral">
+            <Sparkles className="h-3 w-3" />
+            {project.schedule_cron || "global schedule"}
+          </Badge>
+        ) : (
+          <Badge tone="red">
+            <Power className="h-3 w-3" />
+            disabled
+          </Badge>
+        )}
+        {project.source === "auto" ? <Badge tone="violet">auto</Badge> : null}
+      </div>
+
+      {project.last_status === "failed" && project.last_error ? (
+        <p className="mt-3 line-clamp-2 rounded-lg border border-rose-500/20 bg-rose-500/5 px-2.5 py-2 text-[11px] text-rose-300">
+          {project.last_error}
+        </p>
+      ) : null}
+
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/5 pt-4">
+        <Button
+          size="sm"
+          onClick={(event) => {
+            event.stopPropagation();
+            onBackup();
+          }}
+          loading={backupPending}
+          disabled={!project.enabled}
+        >
+          <Play className="h-3.5 w-3.5" /> Back up now
+        </Button>
+        <div className="flex items-center gap-1.5">
+          <Link
+            to={`/projects/${project.id}`}
+            onClick={(event) => event.stopPropagation()}
+            className="flex items-center gap-1 text-xs text-accent-300 hover:text-accent-200"
+          >
+            Open <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+          <Tooltip content={project.enabled ? "Disable backups" : "Enable backups"}>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleDisabled();
+              }}
+              className={cn(
+                "rounded-full border p-1.5 transition duration-200",
+                project.enabled
+                  ? "border-rose-500/25 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:shadow-[0_0_16px_-2px_rgba(244,63,94,0.55)]"
+                  : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:shadow-[0_0_16px_-2px_rgba(16,185,129,0.55)]",
+              )}
+              aria-label={project.enabled ? "Disable backups" : "Enable backups"}
+            >
+              {togglePending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Power className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip content="Move project to Ignored">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onIgnore();
+              }}
+              className="rounded-full border border-white/10 bg-white/5 p-1.5 text-slate-500 transition hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-300 hover:shadow-[0_0_14px_-2px_rgba(244,63,94,0.4)]"
+              aria-label="Move project to Ignored"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function Projects() {
   const queryClient = useQueryClient();
   const [serverFilter, setServerFilter] = useState("all");
@@ -486,7 +649,7 @@ export default function Projects() {
     // Discovery performs Docker scans and auto-imports. Do not run it just
     // because the Projects page was opened; only when Detected/Ignored is
     // viewed or the user explicitly asks for a Rescan.
-    enabled: tab !== "managed" || scanRequested,
+    enabled: tab === "detected" || tab === "ignored" || scanRequested,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -504,6 +667,23 @@ export default function Projects() {
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
+  });
+
+  const toggleProject = useMutation({
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
+      api(`/projects/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      }),
+    onSuccess: () => {
+      setActionError("");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["project"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : "Unable to update backups"),
   });
 
   const ignoreMutation = useMutation({
@@ -546,7 +726,8 @@ export default function Projects() {
   });
 
   const allProjects = projectsQuery.data?.projects || [];
-  const managedProjects = allProjects.filter((project) => !project.ignored);
+  const managedProjects = allProjects.filter((project) => !project.ignored && project.enabled);
+  const disabledProjects = allProjects.filter((project) => !project.ignored && !project.enabled);
   const ignoredDbProjects = allProjects.filter((project) => project.ignored);
   const discovered = discoveryQuery.data?.projects || [];
   const servers = serversQuery.data?.servers || [];
@@ -625,6 +806,7 @@ export default function Projects() {
       <Tabs
         tabs={[
           { id: "managed", label: "Managed", count: managedProjects.length },
+          { id: "disabled", label: "Disabled", count: disabledProjects.length },
           { id: "detected", label: "Detected", count: detectable.length },
           { id: "ignored", label: "Ignored", count: ignoredCount },
         ]}
@@ -653,94 +835,57 @@ export default function Projects() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {managedProjects.map((project) => (
-              <Card key={project.id} className="flex flex-col p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <Link
-                      to={`/projects/${project.id}`}
-                      className="truncate text-sm font-semibold text-slate-100 hover:text-accent-300"
-                    >
-                      {project.name}
-                    </Link>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">
-                      {project.container_name || "no container"}
-                    </p>
-                  </div>
-                  <StatusBadge status={project.last_status} />
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Repo size</p>
-                    <p className="mt-0.5 text-slate-200">{formatBytes(project.repoBytes)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Archives</p>
-                    <p className="mt-0.5 text-slate-200">{project.archiveCount ?? 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Last backup</p>
-                    <p className="mt-0.5 text-slate-200">{timeAgo(project.last_backup_at)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Next run</p>
-                    <p className="mt-0.5 text-slate-200">
-                      {project.enabled ? timeAgo(project.next_run_at) : "—"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <Badge tone={project.containerState === "running" ? "green" : "amber"}>
-                    <Server className="h-3 w-3" />
-                    {project.containerState || "unknown"}
-                  </Badge>
-                  <Badge tone="blue">{project.server_name || "local"}</Badge>
-                  <Badge tone="neutral">
-                    <Sparkles className="h-3 w-3" />
-                    {!project.enabled
-                      ? "disabled"
-                      : project.schedule_cron || "global schedule"}
-                  </Badge>
-                  {project.source === "auto" ? <Badge tone="violet">auto</Badge> : null}
-                  {!project.enabled ? <Badge tone="neutral">disabled</Badge> : null}
-                </div>
-
-                {project.last_status === "failed" && project.last_error ? (
-                  <p className="mt-3 line-clamp-2 rounded-lg border border-rose-500/20 bg-rose-500/5 px-2.5 py-2 text-[11px] text-rose-300">
-                    {project.last_error}
-                  </p>
-                ) : null}
-
-                <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/5 pt-4">
-                  <Button
-                    size="sm"
-                    onClick={() => backupOne.mutate(project.id)}
-                    loading={backupOne.isPending && backupOne.variables === project.id}
-                    disabled={!project.enabled}
-                  >
-                    <Play className="h-3.5 w-3.5" /> Back up now
-                  </Button>
-                  <Link
-                    to={`/projects/${project.id}`}
-                    className="flex items-center gap-1 text-xs text-accent-300 hover:text-accent-200"
-                  >
-                    Open <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                  <Tooltip content="Move project to Ignored">
-                    <button
-                      onClick={() => {
-                        setActionError("");
-                        setRemoveTarget(project);
-                      }}
-                      className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"
-                      aria-label="Move project to Ignored"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </Tooltip>
-                </div>
-              </Card>
+              <ProjectCard
+                key={project.id}
+                project={project}
+                backupPending={backupOne.isPending && backupOne.variables === project.id}
+                togglePending={
+                  toggleProject.isPending && toggleProject.variables?.id === project.id
+                }
+                onBackup={() => backupOne.mutate(project.id)}
+                onToggleDisabled={() =>
+                  toggleProject.mutate({ id: project.id, enabled: !project.enabled })
+                }
+                onIgnore={() => {
+                  setActionError("");
+                  setRemoveTarget(project);
+                }}
+              />
+            ))}
+          </div>
+        )
+      ) : tab === "disabled" ? (
+        projectsQuery.isLoading ? (
+          <Card>
+            <SkeletonRows rows={4} label="Loading projects" />
+          </Card>
+        ) : disabledProjects.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={<Power className="h-8 w-8" />}
+              title="No disabled projects"
+              description="Projects with backups turned off appear here. Use the power button on a project card, or the Disabled option in project settings."
+            />
+          </Card>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {disabledProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                backupPending={backupOne.isPending && backupOne.variables === project.id}
+                togglePending={
+                  toggleProject.isPending && toggleProject.variables?.id === project.id
+                }
+                onBackup={() => backupOne.mutate(project.id)}
+                onToggleDisabled={() =>
+                  toggleProject.mutate({ id: project.id, enabled: !project.enabled })
+                }
+                onIgnore={() => {
+                  setActionError("");
+                  setRemoveTarget(project);
+                }}
+              />
             ))}
           </div>
         )
