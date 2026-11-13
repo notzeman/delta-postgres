@@ -550,14 +550,6 @@ export default function Servers() {
                 key={server.id}
                 className={cn("relative overflow-hidden p-5 sm:p-6", !server.enabled && "opacity-80")}
               >
-                {/* Status light along the top edge. */}
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "pointer-events-none absolute inset-x-8 top-0 h-px",
-                    online ? "bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent" : "bg-gradient-to-r from-transparent via-rose-400/60 to-transparent",
-                  )}
-                />
 
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3.5">
