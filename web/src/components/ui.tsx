@@ -82,14 +82,12 @@ export function Button({
 /** Circular glass back button. Use it for every "up one level" link so back navigation looks the same everywhere. */
 export function BackButton({ to, label }: { to: string; label: string }) {
   return (
-    <Tooltip content={label} side="bottom">
-      <Link to={to} viewTransition aria-label={label} className="back-btn group">
-        <ChevronLeft
-          className="h-5 w-5 transition-transform duration-200 group-hover:-translate-x-0.5"
-          strokeWidth={2}
-        />
-      </Link>
-    </Tooltip>
+    <Link to={to} viewTransition aria-label={label} title={label} className="back-btn group">
+      <ChevronLeft
+        className="h-5 w-5 transition-transform duration-200 group-hover:-translate-x-0.5"
+        strokeWidth={2}
+      />
+    </Link>
   );
 }
 

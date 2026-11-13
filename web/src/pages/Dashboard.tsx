@@ -15,6 +15,9 @@ import {
 import {
   Area,
   AreaChart,
+  Cell,
+  Pie,
+  PieChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -167,6 +170,65 @@ const StorageChart = React.memo(function StorageChart({ data }: { data: ChartPoi
   );
 });
 
+type PieSlice = { name: string; value: number; color: string };
+
+function StorageTooltip({ active, payload, total }: any) {
+  if (!active || !payload?.length) return null;
+  const slice = payload[0].payload as PieSlice;
+  const percent = total ? Math.round((slice.value / total) * 100) : 0;
+  return (
+    <div className="rounded-2xl border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-3.5 py-2.5 text-[13px] shadow-pop backdrop-blur-xl">
+      <p className="font-semibold text-slate-100">{slice.name}</p>
+      <p className="text-slate-400">
+        <span className="num font-semibold text-slate-100">{formatBytes(slice.value)}</span>
+        <span className="ml-1.5 text-slate-500">· {percent}%</span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Whole-volume donut: what Borg holds, what else uses the disk, and what is free.
+ * Standalone (no card) so it sits directly in the empty space under the activity list.
+ */
+function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
+  const used = slices.slice(0, 2).reduce((sum, slice) => sum + slice.value, 0);
+  const borg = slices[0]?.value ?? 0;
+  const tooltip = useMemo(() => <StorageTooltip total={total} />, [total]);
+  return (
+    <div className="relative mx-auto h-[240px] w-full max-w-[240px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={slices}
+            dataKey="value"
+            nameKey="name"
+            innerRadius="66%"
+            outerRadius="92%"
+            startAngle={90}
+            endAngle={-270}
+            stroke="none"
+            paddingAngle={slices.every((slice) => slice.value > 0) ? 2 : 0}
+            isAnimationActive={false}
+          >
+            {slices.map((slice) => (
+              <Cell key={slice.name} fill={slice.color} />
+            ))}
+          </Pie>
+          <Tooltip content={tooltip} isAnimationActive={false} wrapperStyle={{ outline: "none", zIndex: 10 }} />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+        <span className="figure text-2xl">{formatBytes(total)}</span>
+        <span className="mt-0.5 text-[12px] text-slate-400">
+          {total ? `${Math.round((used / total) * 100)}% used` : "volume"}
+        </span>
+        <span className="mt-1 text-[11px] text-slate-500">Borg {formatBytes(borg)}</span>
+      </div>
+    </div>
+  );
+}
+
 function LedgerStat({
   icon,
   label,
@@ -282,6 +344,15 @@ export default function Dashboard() {
   const logicalBytes = stats?.originalBytes ?? 0;
   const storedBytes = stats?.deduplicatedBytes ?? 0;
   const ratio = logicalBytes > 0 ? logicalBytes / Math.max(storedBytes, 1) : 0;
+  const diskTotal = health?.disk?.total ?? 0;
+  const diskFree = health?.disk?.free ?? 0;
+  const borgBytes = repoSizeQuery.data?.repoBytes ?? 0;
+  const otherBytes = Math.max(diskTotal - diskFree - borgBytes, 0);
+  const storageSlices: PieSlice[] = [
+    { name: "Borg backups", value: borgBytes, color: "rgb(var(--accent-500))" },
+    { name: "Other data", value: otherBytes, color: "rgb(var(--white) / 0.22)" },
+    { name: "Free space", value: diskFree, color: "rgb(var(--white) / 0.08)" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -512,8 +583,7 @@ export default function Dashboard() {
               )}
             </Card>
 
-            <div className="space-y-6">
-
+            <div className="flex flex-col gap-6">
               <Card>
                 <CardHeader
                   title="Recent activity"
@@ -528,7 +598,7 @@ export default function Dashboard() {
                   <SkeletonRows rows={3} label="Loading activity" />
                 ) : (
                   <div className="divide-y divide-white/5">
-                    {(stats?.recentJobs || []).slice(0, 6).map((job) => (
+                    {(stats?.recentJobs || []).slice(0, 4).map((job) => (
                     <div key={job.id} className="flex items-center justify-between gap-3 px-5 py-3">
                       <div className="min-w-0">
                         <p className="truncate text-xs font-medium text-slate-200">
@@ -547,6 +617,10 @@ export default function Dashboard() {
                   </div>
                 )}
               </Card>
+
+              <div className="py-2">
+                <StoragePie slices={storageSlices} total={diskTotal} />
+              </div>
             </div>
       </div>
     </div>

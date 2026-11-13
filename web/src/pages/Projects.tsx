@@ -622,7 +622,23 @@ function ProjectCard({
 export default function Projects() {
   const queryClient = useQueryClient();
   const [serverFilter, setServerFilter] = useState("all");
-  const [tab, setTab] = useState("managed");
+  // Remember the last tab (Managed, Disabled, Detected, Ignored) across visits.
+  const [tab, setTabState] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("dp-projects-tab");
+      return saved && ["managed", "disabled", "detected", "ignored"].includes(saved) ? saved : "managed";
+    } catch {
+      return "managed";
+    }
+  });
+  const setTab = (next: string) => {
+    setTabState(next);
+    try {
+      localStorage.setItem("dp-projects-tab", next);
+    } catch {
+      /* storage unavailable: keep in-memory only */
+    }
+  };
   const [scanRequested, setScanRequested] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const addMounted = useDelayedUnmount(addOpen);

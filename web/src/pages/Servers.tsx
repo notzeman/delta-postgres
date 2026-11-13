@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Trash2,
   Wifi,
+  PowerOff,
   WifiOff,
 } from "lucide-react";
 import { api, fmtDate } from "../api";
@@ -564,17 +565,24 @@ export default function Servers() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-[15px] font-semibold text-slate-100">{server.name}</h3>
-                        {!server.enabled ? <Badge tone="red">disabled</Badge> : null}
                       </div>
                       <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
                         {address(server)}
                       </p>
                     </div>
                   </div>
-                  <Badge tone={online ? "green" : "red"}>
-                    {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-                    {online ? "online" : "offline"}
-                  </Badge>
+                  {/* A disabled server is not probed, so it shows one state instead of a stale online/offline. */}
+                  {server.enabled ? (
+                    <Badge tone={online ? "green" : "red"}>
+                      {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                      {online ? "online" : "offline"}
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral">
+                      <PowerOff className="h-3 w-3" />
+                      disabled
+                    </Badge>
+                  )}
                 </div>
 
                 {/* Stats in a frosted inset panel. */}
@@ -610,10 +618,10 @@ export default function Servers() {
                 </dl>
 
                 {server.type === "ssh" && server.ssh_host_key ? (
-                  <div className="mt-3 flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-                    <span className="shrink-0 text-[11px] font-medium text-slate-500">Host key</span>
+                  <div className="mt-3 flex min-w-0 items-center gap-2 rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]">
+                    <span className="shrink-0 text-[11px] font-semibold text-sky-300">Verification</span>
                     <code
-                      className="min-w-0 truncate font-mono text-[11px] text-slate-400"
+                      className="min-w-0 truncate font-mono text-[11px] text-sky-200/80"
                       title={server.ssh_host_key}
                     >
                       {server.ssh_host_key}
@@ -621,7 +629,7 @@ export default function Servers() {
                   </div>
                 ) : null}
 
-                {server.status?.error && !online ? (
+                {server.enabled && server.status?.error && !online ? (
                   <p className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300">
                     {server.status.error}
                   </p>
