@@ -197,6 +197,17 @@ function ServerFormModal({
           save.mutate();
         }}
       >
+        {editing?.type === "ssh" && editing.ssh_host_key ? (
+          <div className="flex min-w-0 items-center gap-2 rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]">
+            <span className="shrink-0 text-[11px] font-semibold text-sky-700 dark:text-sky-300">Verification</span>
+            <code
+              className="min-w-0 truncate font-mono text-[11px] text-sky-800/80 dark:text-sky-200/90"
+              title={editing.ssh_host_key}
+            >
+              {editing.ssh_host_key}
+            </code>
+          </div>
+        ) : null}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Display name">
             <Input
@@ -617,17 +628,6 @@ export default function Servers() {
                   </div>
                 </dl>
 
-                {server.type === "ssh" && server.ssh_host_key ? (
-                  <div className="mt-3 flex min-w-0 items-center gap-2 rounded-xl border border-sky-400/25 bg-sky-400/10 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.08)]">
-                    <span className="shrink-0 text-[11px] font-semibold text-sky-300">Verification</span>
-                    <code
-                      className="min-w-0 truncate font-mono text-[11px] text-sky-200/80"
-                      title={server.ssh_host_key}
-                    >
-                      {server.ssh_host_key}
-                    </code>
-                  </div>
-                ) : null}
 
                 {server.enabled && server.status?.error && !online ? (
                   <p className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300">
