@@ -165,6 +165,23 @@ export function EmptyState({
   );
 }
 
+/**
+ * Keeps a conditionally rendered modal mounted for `ms` after `open` turns false,
+ * so its exit animation can finish before the parent unmounts it.
+ */
+export function useDelayedUnmount(open: boolean, ms = 200): boolean {
+  const [mounted, setMounted] = React.useState(open);
+  React.useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setMounted(false), ms);
+    return () => window.clearTimeout(timer);
+  }, [open, ms]);
+  return open || mounted;
+}
+
 export function Modal({
   open,
   onClose,
@@ -180,27 +197,12 @@ export function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
-  // Stay mounted for the exit animation, then unmount.
-  const [mounted, setMounted] = React.useState(open);
-  const [closing, setClosing] = React.useState(false);
-  React.useEffect(() => {
-    if (open) {
-      setMounted(true);
-      setClosing(false);
-      return;
-    }
-    if (!mounted) return;
-    setClosing(true);
-    const timer = window.setTimeout(() => {
-      setMounted(false);
-      setClosing(false);
-    }, 160);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  // Stay rendered for the exit animation; `closing` is true only during that window.
+  const rendered = useDelayedUnmount(open, 170);
+  const closing = !open && rendered;
 
   return (
-    <Dialog open={mounted} onClose={onClose} className="relative z-50">
+    <Dialog open={rendered} onClose={onClose} className="relative z-50">
       <DialogBackdrop
         className={cn(
           "fixed inset-0 bg-[rgb(var(--ink-950)/0.45)] backdrop-blur-sm",

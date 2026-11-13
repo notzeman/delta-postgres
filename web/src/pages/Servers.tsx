@@ -30,6 +30,7 @@ import {
   Switch,
   Textarea,
   cn,
+  useDelayedUnmount,
 } from "../components/ui";
 import Picker from "../components/Picker";
 import ConfirmModal from "../components/ConfirmModal";
@@ -442,6 +443,7 @@ export default function Servers() {
     refetchInterval: 30_000,
   });
   const [modalOpen, setModalOpen] = useState(false);
+  const modalMounted = useDelayedUnmount(modalOpen);
   const [editing, setEditing] = useState<DockerServer | null>(null);
   const [removeTarget, setRemoveTarget] = useState<DockerServer | null>(null);
   const [error, setError] = useState("");
@@ -697,7 +699,7 @@ export default function Servers() {
         )}
       </ConfirmModal>
 
-      {modalOpen ? (
+      {modalMounted ? (
         <ServerFormModal
           key={editing?.id || "new"}
           open={modalOpen}

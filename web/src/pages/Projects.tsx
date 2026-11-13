@@ -40,6 +40,7 @@ import {
   StatusBadge,
   Tabs,
   cn,
+  useDelayedUnmount,
 } from "../components/ui";
 import CronField from "../components/CronField";
 import Picker from "../components/Picker";
@@ -624,6 +625,7 @@ export default function Projects() {
   const [tab, setTab] = useState("managed");
   const [scanRequested, setScanRequested] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const addMounted = useDelayedUnmount(addOpen);
   const [prefill, setPrefill] = useState<DiscoveredProject | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Project | null>(null);
   const [disableTarget, setDisableTarget] = useState<Project | null>(null);
@@ -1146,7 +1148,7 @@ export default function Projects() {
         and the Borg repository are kept, and the project moves to the Disabled tab.
       </ConfirmModal>
 
-      {addOpen ? (
+      {addMounted ? (
         <AddProjectModal
           key={prefill?.key || "manual"}
           open={addOpen}
