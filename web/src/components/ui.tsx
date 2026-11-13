@@ -180,15 +180,40 @@ export function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
+  // Stay mounted for the exit animation, then unmount.
+  const [mounted, setMounted] = React.useState(open);
+  const [closing, setClosing] = React.useState(false);
+  React.useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+    setClosing(true);
+    const timer = window.setTimeout(() => {
+      setMounted(false);
+      setClosing(false);
+    }, 160);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   return (
-    <Dialog open={open} onClose={onClose} className="relative z-50">
-      <DialogBackdrop className="fixed inset-0 bg-[rgb(var(--ink-950)/0.45)] backdrop-blur-sm" />
+    <Dialog open={mounted} onClose={onClose} className="relative z-50">
+      <DialogBackdrop
+        className={cn(
+          "fixed inset-0 bg-[rgb(var(--ink-950)/0.45)] backdrop-blur-sm",
+          closing ? "modal-backdrop-out" : "modal-backdrop-in",
+        )}
+      />
       <div className="fixed inset-0 overflow-y-auto">
         <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-8">
           <DialogPanel
             className={cn(
               "popover w-full overflow-hidden rounded-[24px]",
               wide ? "max-w-3xl" : "max-w-lg",
+              closing ? "modal-panel-out" : "modal-panel-in",
             )}
           >
             <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-6 py-5">

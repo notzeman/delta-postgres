@@ -263,7 +263,7 @@ export default function Layout({
             <TileLink to="/settings" label="Settings" icon={SettingsIcon} onNavigate={close} />
           </div>
 
-          <div className="flex items-center gap-2 rounded-full bg-accent-500 py-1.5 pl-4 pr-1.5 text-[rgb(var(--on-accent))]">
+          <div className="glass-ink flex items-center gap-2 rounded-full py-1.5 pl-4 pr-1.5">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{user.username}</p>
               <p className="text-[11px] opacity-70">Administrator</p>
@@ -272,7 +272,7 @@ export default function Layout({
               <button
                 type="button"
                 onClick={logout}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 transition hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[rgb(var(--on-accent)/0.1)] shadow-[inset_0_1px_0_rgb(255_255_255/0.18)] transition hover:bg-[rgb(var(--on-accent)/0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--on-accent)/0.5)]"
                 aria-label="Sign out"
               >
                 <LogOut className="h-4 w-4" />
