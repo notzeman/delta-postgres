@@ -546,25 +546,35 @@ export default function Servers() {
           {servers.map((server) => {
             const online = server.status?.online;
             return (
-              <Card key={server.id} className="p-5">
+              <Card
+                key={server.id}
+                className={cn("relative overflow-hidden p-5 sm:p-6", !server.enabled && "opacity-80")}
+              >
+                {/* Status light along the top edge. */}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "pointer-events-none absolute inset-x-8 top-0 h-px",
+                    online ? "bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent" : "bg-gradient-to-r from-transparent via-rose-400/60 to-transparent",
+                  )}
+                />
+
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
+                  <div className="flex min-w-0 items-start gap-3.5">
                     <div
                       className={cn(
-                        "rounded-xl border p-2",
-                        online
-                          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-                          : "border-rose-500/20 bg-rose-500/10 text-rose-300",
+                        "glass grid h-11 w-11 shrink-0 place-items-center rounded-2xl",
+                        online ? "text-emerald-300" : "text-rose-300",
                       )}
                     >
                       <ServerIcon className="h-5 w-5" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold text-slate-100">{server.name}</h3>
+                        <h3 className="text-[15px] font-semibold text-slate-100">{server.name}</h3>
                         {!server.enabled ? <Badge tone="red">disabled</Badge> : null}
                       </div>
-                      <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+                      <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
                         {address(server)}
                       </p>
                     </div>
@@ -575,24 +585,25 @@ export default function Servers() {
                   </Badge>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                {/* Stats in a frosted inset panel. */}
+                <dl className="glass-inset mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl p-4 text-xs sm:grid-cols-4">
                   <div>
-                    <p className="text-xs font-medium text-slate-500">Docker</p>
-                    <p className="mt-0.5 text-slate-200">{server.status?.version || "—"}</p>
+                    <dt className="font-medium text-slate-500">Docker</dt>
+                    <dd className="mt-0.5 text-[13px] text-slate-200">{server.status?.version || "—"}</dd>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500">API</p>
-                    <p className="mt-0.5 text-slate-200">{server.status?.apiVersion || "—"}</p>
+                    <dt className="font-medium text-slate-500">API</dt>
+                    <dd className="mt-0.5 text-[13px] text-slate-200">{server.status?.apiVersion || "—"}</dd>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500">Projects</p>
-                    <p className="mt-0.5 text-slate-200">{server.projectCount ?? 0}</p>
+                    <dt className="font-medium text-slate-500">Projects</dt>
+                    <dd className="num mt-0.5 text-[13px] text-slate-200">{server.projectCount ?? 0}</dd>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500">
+                    <dt className="font-medium text-slate-500">
                       {server.type === "ssh" || server.protocol === "ssh" ? "Auth" : "TLS"}
-                    </p>
-                    <p className="mt-0.5 text-slate-200">
+                    </dt>
+                    <dd className="mt-0.5 text-[13px] text-slate-200">
                       {server.type === "ssh" || server.protocol === "ssh"
                         ? server.hasSshPassword
                           ? "password"
@@ -602,28 +613,32 @@ export default function Servers() {
                             ? "configured"
                             : "no certs"
                           : "—"}
-                    </p>
+                    </dd>
                   </div>
-                </div>
+                </dl>
 
                 {server.type === "ssh" && server.ssh_host_key ? (
-                  <p
-                    className="mt-3 truncate font-mono text-[11px] text-slate-500"
-                    title={server.ssh_host_key}
-                  >
-                    Verification Run : {server.ssh_host_key}
-                  </p>
+                  <div className="mt-3 flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <span className="shrink-0 text-[11px] font-medium text-slate-500">Host key</span>
+                    <code
+                      className="min-w-0 truncate font-mono text-[11px] text-slate-400"
+                      title={server.ssh_host_key}
+                    >
+                      {server.ssh_host_key}
+                    </code>
+                  </div>
                 ) : null}
 
                 {server.status?.error && !online ? (
-                  <p className="mt-3 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2 text-[11px] text-rose-300">
+                  <p className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300">
                     {server.status.error}
                   </p>
                 ) : null}
 
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/5 pt-4">
+                <div className="mt-5 flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
+                    variant="primary"
                     onClick={() => {
                       setError("");
                       scan.mutate(server.id);

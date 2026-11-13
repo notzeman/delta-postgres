@@ -697,6 +697,18 @@ export default function ProjectDetail() {
                 hint={`${archives.length} archives`}
               />
               <DetailStat
+                label="Repository path"
+                value={
+                  <span
+                    className="block break-all font-mono text-xs leading-relaxed text-slate-200"
+                    title={project.repoPath}
+                  >
+                    {project.repoPath || "—"}
+                  </span>
+                }
+                hint="Borg repository on the dashboard host"
+              />
+              <DetailStat
                 label="Retention"
                 value={
                   project.keep_daily == null && project.keep_weekly == null && project.keep_monthly == null

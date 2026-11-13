@@ -29,6 +29,7 @@ export interface Project {
   last_error: string | null;
   next_run_at: string | null;
   repoBytes?: number;
+  repoPath?: string;
   archiveCount?: number;
   containerState?: string;
   containerImage?: string;
