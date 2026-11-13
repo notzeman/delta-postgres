@@ -195,7 +195,6 @@ function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const hoveredSlice = hovered === null ? null : slices[hovered];
-  const toGB = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
   const usedPercent = total ? Math.round((used / total) * 100) : 0;
 
   return (
@@ -237,10 +236,15 @@ function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
       <div
         ref={tipRef}
         aria-hidden="true"
-        className="pointer-events-none absolute left-0 top-0 z-10 rounded-full border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-2.5 py-1 text-[12px] font-semibold text-slate-100 shadow-pop backdrop-blur-xl "
+        className="pointer-events-none absolute left-0 top-0 z-10 rounded-2xl border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-3.5 py-2 text-[13px] shadow-pop backdrop-blur-xl "
         style={{ opacity: hoveredSlice ? 1 : 0, transition: "opacity 380ms ease-out, transform 360ms cubic-bezier(0.32, 0.72, 0, 1)" }}
       >
-        {hoveredSlice ? toGB(hoveredSlice.value) : ""}
+        {hoveredSlice ? (
+          <>
+            <p className="text-[12px] text-slate-400">{hoveredSlice.name}</p>
+            <p className="num font-semibold text-slate-100">{formatBytes(hoveredSlice.value)}</p>
+          </>
+        ) : null}
       </div>
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -371,7 +375,7 @@ export default function Dashboard() {
   const otherBytes = Math.max(diskTotal - diskFree - borgBytes, 0);
   const storageSlices: PieSlice[] = [
     { name: "Borg backups", value: borgBytes, color: "rgb(var(--accent-500))" },
-    { name: "Other data", value: otherBytes, color: "rgb(var(--white) / 0.22)" },
+    { name: "Other used", value: otherBytes, color: "rgb(var(--white) / 0.22)" },
     { name: "Free space", value: diskFree, color: "rgb(var(--white) / 0.08)" },
   ];
 
