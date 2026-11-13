@@ -55,7 +55,6 @@ import {
   repoSizeBytes,
   invalidateRepoSize,
   projectBackupDir,
-  repoPath,
   listArchiveFiles,
   listArchives,
   createArchive,
@@ -962,11 +961,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       /* container may be missing */
     }
     return {
-      project: {
-        ...resolvedProject,
-        repoBytes: await repoSizeBytes(resolvedProject),
-        repoPath: repoPath(resolvedProject),
-      },
+      project: { ...resolvedProject, repoBytes: await repoSizeBytes(resolvedProject) },
       server: server ? toPublicServer(server) : null,
       archives,
       jobs: jobs.rows,
@@ -977,6 +972,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
             image: container.image,
             state: container.state,
             composeProject: container.composeProject,
+            workingDir: container.workingDir || null,
             databases: liveDatabases,
             pgVersion: version,
           }

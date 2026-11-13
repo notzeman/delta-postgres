@@ -675,6 +675,22 @@ export default function ProjectDetail() {
                 }
               />
               <DetailStat
+                label="Project path"
+                value={
+                  <span
+                    className="block break-all font-mono text-xs leading-relaxed text-slate-200"
+                    title={container?.workingDir || undefined}
+                  >
+                    {container?.workingDir || "—"}
+                  </span>
+                }
+                hint={
+                  container?.workingDir
+                    ? "Docker Compose working directory on the server"
+                    : "Not available for this container"
+                }
+              />
+              <DetailStat
                 label="PostgreSQL"
                 value={container?.pgVersion || "unknown"}
                 hint={container?.image || project.container_image || ""}
@@ -695,18 +711,6 @@ export default function ProjectDetail() {
                 label="Repository"
                 value={formatBytes(project.repoBytes)}
                 hint={`${archives.length} archives`}
-              />
-              <DetailStat
-                label="Repository path"
-                value={
-                  <span
-                    className="block break-all font-mono text-xs leading-relaxed text-slate-200"
-                    title={project.repoPath}
-                  >
-                    {project.repoPath || "—"}
-                  </span>
-                }
-                hint="Borg repository on the dashboard host"
               />
               <DetailStat
                 label="Retention"

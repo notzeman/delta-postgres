@@ -29,7 +29,6 @@ export interface Project {
   last_error: string | null;
   next_run_at: string | null;
   repoBytes?: number;
-  repoPath?: string;
   archiveCount?: number;
   containerState?: string;
   containerImage?: string;
@@ -222,6 +221,7 @@ export interface ProjectDetailResponse {
     image: string;
     state: string;
     composeProject: string | null;
+    workingDir: string | null;
     databases: Array<{ name: string; sizeBytes: number }>;
     pgVersion: string;
   } | null;
