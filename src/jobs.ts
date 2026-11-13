@@ -75,12 +75,15 @@ export function readJobLog(jobId: number, maxLines = 600): string {
 export async function createJob(
   projectId: number,
   trigger: string,
+  options: { attempt?: number; availableAt?: Date } = {},
 ): Promise<BackupJob> {
+  const attempt = options.attempt ?? 0;
+  const availableAt = options.availableAt ?? new Date();
   const { rows } = await pool.query<BackupJob>(
-    `INSERT INTO backup_jobs(project_id, trigger, status, log_file)
-     VALUES($1, $2, 'queued', $3)
+    `INSERT INTO backup_jobs(project_id, trigger, status, log_file, attempt, available_at)
+     VALUES($1, $2, 'queued', $3, $4, $5)
      RETURNING *`,
-    [projectId, trigger, jobLogFile(0)],
+    [projectId, trigger, jobLogFile(0), attempt, availableAt],
   );
   const job = rows[0];
   const file = ensureJobLog(job.id);
@@ -89,7 +92,12 @@ export async function createJob(
     job.id,
   ]);
   job.log_file = file;
-  appendLog(job.id, `Job #${job.id} queued (${trigger})`);
+  appendLog(
+    job.id,
+    attempt > 0
+      ? `Job #${job.id} queued (${trigger}, attempt ${attempt})`
+      : `Job #${job.id} queued (${trigger})`,
+  );
   return job;
 }
 
@@ -163,6 +171,29 @@ async function notifyWebhook(
       `Webhook notification failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+async function scheduleRetry(
+  job: BackupJob,
+  project: Project,
+  message: string,
+): Promise<void> {
+  const attempt = job.attempt ?? 0;
+  if (attempt >= project.max_retries) return;
+  const delayMinutes = Math.max(1, project.retry_delay_minutes || 5);
+  const availableAt = new Date(Date.now() + delayMinutes * 60_000);
+  const retry = await createJob(project.id, "retry", {
+    attempt: attempt + 1,
+    availableAt,
+  });
+  appendLog(
+    job.id,
+    `Retry ${attempt + 1}/${project.max_retries} scheduled in ${delayMinutes}m (job ${retry.id})`,
+  );
+  appendLog(
+    retry.id,
+    `Retry ${attempt + 1}/${project.max_retries} of failed job #${job.id}: ${message}`,
+  );
 }
 
 async function executeBackup(job: BackupJob, project: Project): Promise<void> {
@@ -487,6 +518,7 @@ async function tick(): Promise<void> {
            SELECT bj.id FROM backup_jobs bj
            JOIN projects p ON p.id = bj.project_id
            WHERE bj.status = 'queued'
+             AND bj.available_at <= now()
              AND NOT (p.server_id = ANY($1::int[]))
            ORDER BY bj.created_at ASC
            LIMIT 1
@@ -512,8 +544,9 @@ async function tick(): Promise<void> {
 
 async function runClaimedJob(jobId: number, serverId: number): Promise<void> {
   let project: Project | null = null;
+  let job: BackupJob | null = null;
   try {
-    const job = await getJob(jobId);
+    job = await getJob(jobId);
     if (!job) return;
     project = await getProject(job.project_id);
     if (!project) throw new Error("Project not found");
@@ -545,7 +578,19 @@ async function runClaimedJob(jobId: number, serverId: number): Promise<void> {
         .catch(() => {});
     }
     appendLog(jobId, `ERROR: ${message}`);
-    if (!canceled && project) await notifyWebhook(project, jobId, "failed", message);
+    if (!canceled && project) {
+      await notifyWebhook(project, jobId, "failed", message);
+      if (job) {
+        await scheduleRetry(job, project, message).catch((retryError) => {
+          appendLog(
+            jobId,
+            `Unable to schedule retry: ${
+              retryError instanceof Error ? retryError.message : String(retryError)
+            }`,
+          );
+        });
+      }
+    }
   } finally {
     activeJobs.delete(jobId);
     activeServers.delete(serverId);

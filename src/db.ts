@@ -30,6 +30,8 @@ export interface Project {
   keep_daily: number | null;
   keep_weekly: number | null;
   keep_monthly: number | null;
+  max_retries: number;
+  retry_delay_minutes: number;
   compression: string;
   notes: string | null;
   last_backup_at: string | null;
@@ -45,6 +47,8 @@ export interface BackupJob {
   project_id: number;
   trigger: string;
   status: string;
+  attempt: number;
+  available_at: string;
   archive_name: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -138,6 +142,8 @@ export async function ensureSchema(): Promise<void> {
       keep_daily INTEGER,
       keep_weekly INTEGER,
       keep_monthly INTEGER,
+      max_retries INTEGER NOT NULL DEFAULT 0,
+      retry_delay_minutes INTEGER NOT NULL DEFAULT 5,
       compression TEXT NOT NULL DEFAULT 'auto,zstd,3',
       notes TEXT,
       last_backup_at TIMESTAMPTZ,
@@ -153,6 +159,8 @@ export async function ensureSchema(): Promise<void> {
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       trigger TEXT NOT NULL DEFAULT 'manual',
       status TEXT NOT NULL DEFAULT 'queued',
+      attempt INTEGER NOT NULL DEFAULT 0,
+      available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       archive_name TEXT,
       started_at TIMESTAMPTZ,
       finished_at TIMESTAMPTZ,
@@ -227,6 +235,18 @@ export async function ensureSchema(): Promise<void> {
   );
   await pool.query(
     `ALTER TABLE projects ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT false`,
+  );
+  await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 0`,
+  );
+  await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS retry_delay_minutes INTEGER NOT NULL DEFAULT 5`,
+  );
+  await pool.query(
+    `ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0`,
+  );
+  await pool.query(
+    `ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
   );
   await pool.query(
     `ALTER TABLE servers ADD COLUMN IF NOT EXISTS ssh_username TEXT`,

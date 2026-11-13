@@ -545,6 +545,16 @@ html:not(.dark) .text-violet-300 {
 .modal-panel-in { animation: modal-panel-in 320ms cubic-bezier(0.32, 0.72, 0, 1) both; }
 .modal-panel-out { animation: modal-panel-out 160ms ease-in both; }
 
+/* Donut slice hover: a slow swell and brighten, eased so it never snaps. */
+@keyframes pie-slice-swell {
+  from { transform: scale(1); filter: brightness(1); }
+  to { transform: scale(1.05); filter: brightness(1.18); }
+}
+.pie-slice-active {
+  transform-box: view-box;
+  animation: pie-slice-swell 700ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*),
   ::view-transition-old(*),

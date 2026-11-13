@@ -175,7 +175,14 @@ type PieSlice = { name: string; value: number; color: string };
 
 // Module-level so the reference stays stable across renders (an inline function would remount slices on every mouse move).
 function renderActiveSlice(props: any) {
-  return <Sector {...props} outerRadius={props.outerRadius + 6} style={{ filter: "brightness(1.15)" }} />;
+  // Scales the slice outward from the pie's centre with a slow keyframe (see .pie-slice-active in index.css).
+  return (
+    <Sector
+      {...props}
+      className="pie-slice-active"
+      style={{ transformOrigin: `${props.cx}px ${props.cy}px` }}
+    />
+  );
 }
 
 /**
@@ -185,11 +192,11 @@ function renderActiveSlice(props: any) {
  */
 function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
   const used = slices.slice(0, 2).reduce((sum, slice) => sum + slice.value, 0);
-  const borg = slices[0]?.value ?? 0;
   const [hovered, setHovered] = useState<number | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const hoveredSlice = hovered === null ? null : slices[hovered];
-  const percent = hoveredSlice && total ? Math.round((hoveredSlice.value / total) * 100) : 0;
+  const toGB = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  const usedPercent = total ? Math.round((used / total) * 100) : 0;
 
   return (
     <div
@@ -230,18 +237,14 @@ function StoragePie({ slices, total }: { slices: PieSlice[]; total: number }) {
       <div
         ref={tipRef}
         aria-hidden="true"
-        className="pointer-events-none absolute left-0 top-0 z-10 rounded-full border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-2.5 py-1 text-[12px] font-semibold text-slate-100 shadow-pop backdrop-blur-xl transition-opacity duration-150"
-        style={{ opacity: hoveredSlice ? 1 : 0, transition: "opacity 150ms ease-out, transform 140ms cubic-bezier(0.32, 0.72, 0, 1)" }}
+        className="pointer-events-none absolute left-0 top-0 z-10 rounded-full border border-[rgb(var(--glass-border))] bg-[rgb(var(--glass-strong))] px-2.5 py-1 text-[12px] font-semibold text-slate-100 shadow-pop backdrop-blur-xl "
+        style={{ opacity: hoveredSlice ? 1 : 0, transition: "opacity 380ms ease-out, transform 360ms cubic-bezier(0.32, 0.72, 0, 1)" }}
       >
-        {percent}%
+        {hoveredSlice ? toGB(hoveredSlice.value) : ""}
       </div>
 
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="figure text-2xl">{formatBytes(total)}</span>
-        <span className="mt-0.5 text-[12px] text-slate-400">
-          {total ? `${Math.round((used / total) * 100)}% used` : "volume"}
-        </span>
-        <span className="mt-1 text-[11px] text-slate-500">Borg {formatBytes(borg)}</span>
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <span className="figure text-3xl">{usedPercent}%</span>
       </div>
     </div>
   );

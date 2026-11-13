@@ -22,6 +22,8 @@ export interface Project {
   keep_daily: number | null;
   keep_weekly: number | null;
   keep_monthly: number | null;
+  max_retries: number;
+  retry_delay_minutes: number;
   compression: string;
   notes: string | null;
   last_backup_at: string | null;
@@ -62,6 +64,7 @@ export interface Job {
   project_slug?: string;
   trigger: string;
   status: string;
+  attempt?: number;
   archive_name: string | null;
   started_at: string | null;
   finished_at: string | null;

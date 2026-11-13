@@ -994,6 +994,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       keepDaily: z.number().int().min(0).nullable().optional(),
       keepWeekly: z.number().int().min(0).nullable().optional(),
       keepMonthly: z.number().int().min(0).nullable().optional(),
+      maxRetries: z.number().int().min(0).max(10).optional(),
+      retryDelayMinutes: z.number().int().min(1).max(1440).optional(),
       compression: z.string().optional(),
       notes: z.string().nullable().optional(),
     });
@@ -1025,8 +1027,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         name = $1, enabled = $2, pg_user = $3, pg_default_db = $4,
         databases = $5, schedule_cron = $6, keep_daily = $7, keep_weekly = $8,
         keep_monthly = $9, compression = $10, notes = $11, next_run_at = $12,
-        ignored = $13, updated_at = now()
-       WHERE id = $14 RETURNING *`,
+        ignored = $13, max_retries = $14, retry_delay_minutes = $15,
+        updated_at = now()
+       WHERE id = $16 RETURNING *`,
       [
         body.name ?? project.name,
         body.enabled ?? project.enabled,
@@ -1047,6 +1050,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         body.notes === undefined ? project.notes : body.notes,
         nextRun,
         body.ignored === undefined ? project.ignored : body.ignored,
+        body.maxRetries === undefined ? project.max_retries : body.maxRetries,
+        body.retryDelayMinutes === undefined
+          ? project.retry_delay_minutes
+          : body.retryDelayMinutes,
         project.id,
       ],
     );

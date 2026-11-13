@@ -150,9 +150,12 @@ export default function ProjectDetail() {
     keepDaily: "",
     keepWeekly: "",
     keepMonthly: "",
+    maxRetries: "",
+    retryDelayMinutes: "",
     compression: "",
     notes: "",
   });
+  const [retryMode, setRetryMode] = useState("5");
 
   const [savedSettings, setSavedSettings] = useState<typeof form | null>(null);
 
@@ -190,11 +193,15 @@ export default function ProjectDetail() {
       keepDaily: project.keep_daily === null ? "" : String(project.keep_daily),
       keepWeekly: project.keep_weekly === null ? "" : String(project.keep_weekly),
       keepMonthly: project.keep_monthly === null ? "" : String(project.keep_monthly),
+      maxRetries: String(project.max_retries ?? 0),
+      retryDelayMinutes: String(project.retry_delay_minutes ?? 5),
       compression: project.compression,
       notes: project.notes || "",
     };
     setForm(next);
     setSavedSettings(next);
+    const delay = String(project.retry_delay_minutes ?? 5);
+    setRetryMode(["5", "15", "30"].includes(delay) ? delay : "custom");
   }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const settingsDirty =
@@ -263,6 +270,9 @@ export default function ProjectDetail() {
           keepDaily: form.keepDaily === "" ? null : Number(form.keepDaily),
           keepWeekly: form.keepWeekly === "" ? null : Number(form.keepWeekly),
           keepMonthly: form.keepMonthly === "" ? null : Number(form.keepMonthly),
+          maxRetries: form.maxRetries === "" ? 0 : Number(form.maxRetries),
+          retryDelayMinutes:
+            form.retryDelayMinutes === "" ? 5 : Number(form.retryDelayMinutes),
           compression: form.compression,
           notes: form.notes || null,
         }),
@@ -1261,7 +1271,7 @@ export default function ProjectDetail() {
       {tab === "settings" ? (
         <div className="grid gap-6 xl:grid-cols-3">
           <Card className="xl:col-span-2">
-            <CardHeader title="Project settings" subtitle="Schedule, retention, and backup scope" />
+            <CardHeader title="Project settings" subtitle="Schedule, retention, retries, and backup scope" />
             <form
               className="space-y-4 p-5"
               onSubmit={(event) => {
@@ -1335,6 +1345,57 @@ export default function ProjectDetail() {
                     onChange={(event) => setForm((f) => ({ ...f, keepMonthly: event.target.value }))}
                     placeholder="global"
                   />
+                </Field>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Retry attempts"
+                  hint="How many times to retry a failed backup (0 disables retries)"
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={form.maxRetries}
+                    onChange={(event) =>
+                      setForm((f) => ({ ...f, maxRetries: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="Retry delay" hint="Wait before the next attempt">
+                  <div className="space-y-2">
+                    <Picker
+                      value={retryMode}
+                      onChange={(next) => {
+                        setRetryMode(next);
+                        if (next !== "custom") {
+                          setForm((f) => ({ ...f, retryDelayMinutes: next }));
+                        }
+                      }}
+                      options={[
+                        { value: "5", label: "5 minutes" },
+                        { value: "15", label: "15 minutes" },
+                        { value: "30", label: "30 minutes" },
+                        { value: "custom", label: "Custom" },
+                      ]}
+                      ariaLabel="Retry delay"
+                    />
+                    {retryMode === "custom" ? (
+                      <Input
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={form.retryDelayMinutes}
+                        onChange={(event) =>
+                          setForm((f) => ({
+                            ...f,
+                            retryDelayMinutes: event.target.value,
+                          }))
+                        }
+                        placeholder="Minutes"
+                      />
+                    ) : null}
+                  </div>
                 </Field>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
