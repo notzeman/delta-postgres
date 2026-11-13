@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight,
   Check,
   Database,
   EyeOff,
@@ -545,7 +544,6 @@ function ProjectCard({
             disabled
           </Badge>
         )}
-        {project.source === "auto" ? <Badge tone="violet">auto</Badge> : null}
       </div>
 
       {project.last_status === "failed" && project.last_error ? (
@@ -555,25 +553,30 @@ function ProjectCard({
       ) : null}
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-white/5 pt-4">
-        <Button
-          size="sm"
+        {/* Icon-only until the card is hovered or focused; the label then slides open.
+            Touch screens (no hover) always show it. */}
+        <button
+          type="button"
           onClick={(event) => {
             event.stopPropagation();
             onBackup();
           }}
-          loading={backupPending}
-          disabled={!project.enabled}
+          disabled={!project.enabled || backupPending}
+          aria-label="Back up now"
+          className="btn-secondary h-8 gap-0 px-[9px] text-xs"
         >
-          <Play className="h-3.5 w-3.5" /> Back up now
-        </Button>
+          {backupPending ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Play className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="grid grid-cols-[0fr] transition-[grid-template-columns] duration-300 ease-out group-hover:grid-cols-[1fr] group-focus-within:grid-cols-[1fr] [@media(hover:none)]:grid-cols-[1fr]">
+            <span className="min-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-hover:delay-75 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+              <span className="pl-1.5 pr-0.5">Back up now</span>
+            </span>
+          </span>
+        </button>
         <div className="flex items-center gap-1.5">
-          <Link
-            to={`/projects/${project.id}`}
-            onClick={(event) => event.stopPropagation()}
-            className="flex items-center gap-1 text-xs text-accent-300 hover:text-accent-200"
-          >
-            Open <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
           <Tooltip content={project.enabled ? "Disable backups" : "Enable backups"}>
             <button
               type="button"
@@ -623,6 +626,7 @@ export default function Projects() {
   const [addOpen, setAddOpen] = useState(false);
   const [prefill, setPrefill] = useState<DiscoveredProject | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Project | null>(null);
+  const [disableTarget, setDisableTarget] = useState<Project | null>(null);
   const [actionError, setActionError] = useState("");
   const serverQuery = serverFilter === "all" ? "" : `?serverId=${serverFilter}`;
   // Set by "Rescan" so the next discovery request bypasses the server cache.
@@ -685,6 +689,13 @@ export default function Projects() {
     onError: (err) =>
       setActionError(err instanceof Error ? err.message : "Unable to update backups"),
   });
+
+  // Turning backups off asks first; turning them back on is safe and immediate.
+  const requestToggle = (project: Project) => {
+    setActionError("");
+    if (project.enabled) setDisableTarget(project);
+    else toggleProject.mutate({ id: project.id, enabled: true });
+  };
 
   const ignoreMutation = useMutation({
     mutationFn: (payload: { serverId: number; composeProject: string; ignore: boolean }) =>
@@ -843,9 +854,7 @@ export default function Projects() {
                   toggleProject.isPending && toggleProject.variables?.id === project.id
                 }
                 onBackup={() => backupOne.mutate(project.id)}
-                onToggleDisabled={() =>
-                  toggleProject.mutate({ id: project.id, enabled: !project.enabled })
-                }
+                onToggleDisabled={() => requestToggle(project)}
                 onIgnore={() => {
                   setActionError("");
                   setRemoveTarget(project);
@@ -878,9 +887,7 @@ export default function Projects() {
                   toggleProject.isPending && toggleProject.variables?.id === project.id
                 }
                 onBackup={() => backupOne.mutate(project.id)}
-                onToggleDisabled={() =>
-                  toggleProject.mutate({ id: project.id, enabled: !project.enabled })
-                }
+                onToggleDisabled={() => requestToggle(project)}
                 onIgnore={() => {
                   setActionError("");
                   setRemoveTarget(project);
@@ -1114,6 +1121,29 @@ export default function Projects() {
       >
         Archives, backup jobs, and the encrypted Borg repository will be kept. The project
         disappears from Managed and auto-discovery will not re-add it.
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={Boolean(disableTarget)}
+        onClose={() => {
+          setDisableTarget(null);
+          setActionError("");
+        }}
+        onConfirm={() =>
+          disableTarget &&
+          toggleProject.mutate(
+            { id: disableTarget.id, enabled: false },
+            { onSuccess: () => setDisableTarget(null) },
+          )
+        }
+        title="Disable backups?"
+        description={disableTarget?.name}
+        confirmLabel="Disable backups"
+        loading={toggleProject.isPending}
+        error={disableTarget ? actionError : undefined}
+      >
+        Scheduled backups for this project stop until you turn them back on. Existing archives
+        and the Borg repository are kept, and the project moves to the Disabled tab.
       </ConfirmModal>
 
       {addOpen ? (

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   CalendarClock,
   CheckCircle2,
   Database,
@@ -23,6 +22,7 @@ import {
 import { api, downloadUrl, duration, fmtDate, formatBytes, timeAgo } from "../api";
 import type { Archive, ArchiveDatabase, Project, ProjectDetailResponse } from "../types";
 import {
+  BackButton,
   Badge,
   Button,
   Card,
@@ -584,20 +584,15 @@ export default function ProjectDetail() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-        <div>
-          <Link
-            to="/projects"
-            className="mb-2 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Projects
-          </Link>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
+            <BackButton to="/projects" label="Back to projects" />
             <h2 className="text-2xl font-semibold tracking-tight text-slate-100">{project.name}</h2>
             <StatusBadge status={project.last_status} />
             {project.ignored ? <Badge tone="neutral">ignored</Badge> : null}
             {!project.enabled ? <Badge tone="red">disabled</Badge> : null}
           </div>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-slate-500 sm:pl-[52px]">
             {project.server_name || "local"} · {project.container_name || "no container"} ·{" "}
             {project.container_image || "unknown image"} · {project.pg_user}
           </p>

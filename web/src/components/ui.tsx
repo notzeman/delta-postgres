@@ -1,6 +1,8 @@
 import React, { useEffect, useId } from "react";
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
-import { Check, Loader2, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Check, ChevronLeft, Loader2, X } from "lucide-react";
+import Tooltip from "./Tooltip";
 import { useSnackbar } from "./Snackbar";
 import { withViewTransition } from "./viewTransition";
 import { useSlidingIndicator } from "./useSlidingIndicator";
@@ -74,6 +76,20 @@ export function Button({
       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
       {children}
     </button>
+  );
+}
+
+/** Circular glass back button. Use it for every "up one level" link so back navigation looks the same everywhere. */
+export function BackButton({ to, label }: { to: string; label: string }) {
+  return (
+    <Tooltip content={label} side="bottom">
+      <Link to={to} viewTransition aria-label={label} className="back-btn group">
+        <ChevronLeft
+          className="h-5 w-5 transition-transform duration-200 group-hover:-translate-x-0.5"
+          strokeWidth={2}
+        />
+      </Link>
+    </Tooltip>
   );
 }
 
