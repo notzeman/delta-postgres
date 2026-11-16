@@ -184,7 +184,9 @@ Imported archives keep their original timestamps and are subject to retention. I
 
 ## Configuration
 
-Schedules, timezone, concurrency, retention, the notification webhook and auto-add are set on the dashboard's **Settings** page. The `.env` file holds secrets and ports only.
+Schedules, timezone, concurrency, retention, retry attempts/delay, compression, the notification webhook and auto-add are set on the dashboard's **Settings** page. The `.env` file holds secrets and ports only.
+
+Global retry and compression values are inherited by all projects by default. A project can override them independently with the **Use global retry settings** and **Use global compression settings** checkboxes in its **Settings** tab.
 
 Each project's **Settings → Schedule** dropdown also includes **Disabled (no backups)**. Selecting it disables the project, clears its next run, and cancels any queued backups. Pick a schedule or **Inherit global schedule** to re-enable it.
 

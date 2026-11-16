@@ -22,7 +22,19 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { api, downloadUrl, duration, fmtDate, formatBytes, timeAgo } from "../api";
-import type { Archive, ArchiveDatabase, Project, ProjectDetailResponse } from "../types";
+import type {
+  Archive,
+  ArchiveDatabase,
+  Project,
+  ProjectDetailResponse,
+  Settings as SettingsType,
+} from "../types";
+import {
+  COMPRESSION_MECHANISMS,
+  buildCompression,
+  compressionSupportsLevel,
+  parseCompression,
+} from "../compression";
 import {
   BackButton,
   Badge,
@@ -68,58 +80,6 @@ function DetailStat({
   );
 }
 
-const COMPRESSION_MECHANISMS = [
-  {
-    value: "auto,zstd",
-    label: "zstd · auto",
-    description: "Compress compressible chunks only · recommended",
-  },
-  {
-    value: "auto,lz4",
-    label: "lz4 · auto",
-    description: "Compress compressible chunks only · fastest",
-  },
-  { value: "zstd", label: "zstd", description: "Compress every chunk with zstd" },
-  { value: "lz4", label: "lz4", description: "Fastest compressor, larger archives" },
-  { value: "zlib", label: "zlib", description: "Older gzip-style compressor" },
-  { value: "lzma", label: "lzma", description: "Smallest archives, slowest" },
-  { value: "none", label: "none", description: "Store chunks uncompressed" },
-];
-
-function compressionSupportsLevel(mechanism: string): boolean {
-  return (
-    mechanism === "auto,zstd" ||
-    mechanism === "zstd" ||
-    mechanism === "zlib" ||
-    mechanism === "lzma"
-  );
-}
-
-function parseCompression(spec: string): { mechanism: string; level: string } {
-  const parts = (spec || "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return { mechanism: "auto,zstd", level: "3" };
-  if (parts[0] === "auto" && parts.length > 1) {
-    const mechanism = `auto,${parts[1]}`;
-    return {
-      mechanism,
-      level: compressionSupportsLevel(mechanism) ? parts[2] || "3" : "",
-    };
-  }
-  const mechanism = parts[0];
-  return {
-    mechanism,
-    level: compressionSupportsLevel(mechanism) ? parts[1] || "3" : "",
-  };
-}
-
-function buildCompression(mechanism: string, level: string): string {
-  if (!compressionSupportsLevel(mechanism)) return mechanism;
-  return `${mechanism},${level || "3"}`;
-}
-
 export default function ProjectDetail() {
   const { id } = useParams();
   const projectId = Number(id);
@@ -137,6 +97,19 @@ export default function ProjectDetail() {
     refetchInterval: 15_000,
     enabled: Number.isFinite(projectId),
   });
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<{ settings: SettingsType }>("/settings"),
+    staleTime: 60_000,
+  });
+  const globalSettings = settingsQuery.data?.settings;
+  const globalMaxRetries = globalSettings?.defaultMaxRetries ?? 0;
+  const globalRetryDelay = globalSettings?.defaultRetryDelayMinutes ?? 5;
+  const globalCompression = globalSettings?.defaultCompression ?? "auto,zstd,3";
+  const globalCompressionParsed = parseCompression(globalCompression);
+  const globalCompressionLabel = `${globalCompressionParsed.mechanism}${
+    globalCompressionParsed.level ? ` level ${globalCompressionParsed.level}` : ""
+  }`;
 
   const project = projectQuery.data?.project;
   const server = projectQuery.data?.server;
@@ -156,6 +129,8 @@ export default function ProjectDetail() {
     maxRetries: "",
     retryDelayMinutes: "",
     compression: "",
+    useGlobalRetry: true,
+    useGlobalCompression: true,
     notes: "",
   });
   const [retryMode, setRetryMode] = useState("5");
@@ -187,6 +162,9 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (!project) return;
+    const usesGlobalRetry =
+      project.max_retries === null && project.retry_delay_minutes === null;
+    const usesGlobalCompression = project.compression === null;
     const next = {
       name: project.name,
       enabled: project.enabled,
@@ -196,16 +174,18 @@ export default function ProjectDetail() {
       keepDaily: project.keep_daily === null ? "" : String(project.keep_daily),
       keepWeekly: project.keep_weekly === null ? "" : String(project.keep_weekly),
       keepMonthly: project.keep_monthly === null ? "" : String(project.keep_monthly),
-      maxRetries: String(project.max_retries ?? 0),
-      retryDelayMinutes: String(project.retry_delay_minutes ?? 5),
-      compression: project.compression,
+      maxRetries: String(project.max_retries ?? globalMaxRetries),
+      retryDelayMinutes: String(project.retry_delay_minutes ?? globalRetryDelay),
+      compression: project.compression ?? globalCompression,
+      useGlobalRetry: usesGlobalRetry,
+      useGlobalCompression: usesGlobalCompression,
       notes: project.notes || "",
     };
     setForm(next);
     setSavedSettings(next);
-    const delay = String(project.retry_delay_minutes ?? 5);
+    const delay = String(project.retry_delay_minutes ?? globalRetryDelay);
     setRetryMode(["5", "15", "30"].includes(delay) ? delay : "custom");
-  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project?.id, globalMaxRetries, globalRetryDelay, globalCompression]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const settingsDirty =
     savedSettings !== null && JSON.stringify(form) !== JSON.stringify(savedSettings);
@@ -273,10 +253,17 @@ export default function ProjectDetail() {
           keepDaily: form.keepDaily === "" ? null : Number(form.keepDaily),
           keepWeekly: form.keepWeekly === "" ? null : Number(form.keepWeekly),
           keepMonthly: form.keepMonthly === "" ? null : Number(form.keepMonthly),
-          maxRetries: form.maxRetries === "" ? 0 : Number(form.maxRetries),
-          retryDelayMinutes:
-            form.retryDelayMinutes === "" ? 5 : Number(form.retryDelayMinutes),
-          compression: form.compression,
+          maxRetries: form.useGlobalRetry
+            ? null
+            : form.maxRetries === ""
+              ? 0
+              : Number(form.maxRetries),
+          retryDelayMinutes: form.useGlobalRetry
+            ? null
+            : form.retryDelayMinutes === ""
+              ? 5
+              : Number(form.retryDelayMinutes),
+          compression: form.useGlobalCompression ? null : form.compression,
           notes: form.notes || null,
         }),
       }),
@@ -1336,6 +1323,31 @@ export default function ProjectDetail() {
                   />
                 </Field>
               </div>
+              <Checkbox
+                checked={form.useGlobalRetry}
+                onChange={(checked) => {
+                  setForm((f) => ({
+                    ...f,
+                    useGlobalRetry: checked,
+                    ...(checked
+                      ? {
+                          maxRetries: String(globalMaxRetries),
+                          retryDelayMinutes: String(globalRetryDelay),
+                        }
+                      : {}),
+                  }));
+                  if (checked) {
+                    const delay = String(globalRetryDelay);
+                    setRetryMode(
+                      ["5", "15", "30"].includes(delay) ? delay : "custom",
+                    );
+                  }
+                }}
+                label="Use global retry settings"
+                description={`Global: ${globalMaxRetries} retr${
+                  globalMaxRetries === 1 ? "y" : "ies"
+                }, ${globalRetryDelay} minute${globalRetryDelay === 1 ? "" : "s"} delay`}
+              />
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label="Retry attempts"
@@ -1346,6 +1358,7 @@ export default function ProjectDetail() {
                     min={0}
                     max={10}
                     value={form.maxRetries}
+                    disabled={form.useGlobalRetry}
                     onChange={(event) =>
                       setForm((f) => ({ ...f, maxRetries: event.target.value }))
                     }
@@ -1355,6 +1368,7 @@ export default function ProjectDetail() {
                   <div className="space-y-2">
                     <Picker
                       value={retryMode}
+                      disabled={form.useGlobalRetry}
                       onChange={(next) => {
                         setRetryMode(next);
                         if (next !== "custom") {
@@ -1375,6 +1389,7 @@ export default function ProjectDetail() {
                         min={1}
                         max={1440}
                         value={form.retryDelayMinutes}
+                        disabled={form.useGlobalRetry}
                         onChange={(event) =>
                           setForm((f) => ({
                             ...f,
@@ -1387,10 +1402,23 @@ export default function ProjectDetail() {
                   </div>
                 </Field>
               </div>
+              <Checkbox
+                checked={form.useGlobalCompression}
+                onChange={(checked) =>
+                  setForm((f) => ({
+                    ...f,
+                    useGlobalCompression: checked,
+                    ...(checked ? { compression: globalCompression } : {}),
+                  }))
+                }
+                label="Use global compression settings"
+                description={`Global: ${globalCompressionLabel}`}
+              />
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Compression" hint="Borg compression mechanism">
                   <Picker
                     value={compressionMechanism}
+                    disabled={form.useGlobalCompression}
                     onChange={(next) =>
                       setForm((f) => ({
                         ...f,
@@ -1422,7 +1450,10 @@ export default function ProjectDetail() {
                       label: `Level ${level}`,
                       description: level === "3" ? "Default" : undefined,
                     }))}
-                    disabled={!compressionSupportsLevel(compressionMechanism)}
+                    disabled={
+                      form.useGlobalCompression ||
+                      !compressionSupportsLevel(compressionMechanism)
+                    }
                     placeholder="—"
                     ariaLabel="Compression level"
                   />

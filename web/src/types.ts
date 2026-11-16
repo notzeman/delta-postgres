@@ -23,9 +23,9 @@ export interface Project {
   keep_daily: number | null;
   keep_weekly: number | null;
   keep_monthly: number | null;
-  max_retries: number;
-  retry_delay_minutes: number;
-  compression: string;
+  max_retries: number | null;
+  retry_delay_minutes: number | null;
+  compression: string | null;
   notes: string | null;
   last_backup_at: string | null;
   last_status: string | null;
@@ -207,6 +207,9 @@ export interface Settings {
   keepDaily: number;
   keepWeekly: number;
   keepMonthly: number;
+  defaultMaxRetries: number;
+  defaultRetryDelayMinutes: number;
+  defaultCompression: string;
   notificationWebhook: string;
   autoAddProjects: boolean;
   timezone: string;

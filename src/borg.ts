@@ -123,12 +123,16 @@ export async function createArchive(
   log: LogFn,
 ): Promise<BorgArchiveStats> {
   await ensureRepo(project, log);
+  const settings = project.compression ? null : await getSettings();
+  const compression =
+    project.compression ||
+    String(settings?.defaultCompression || "auto,zstd,3");
   const args = [
     "create",
     "--stats",
     "--json",
     "--compression",
-    project.compression || "auto,zstd,3",
+    compression,
     archiveRef(project, archiveName),
     ".",
   ];

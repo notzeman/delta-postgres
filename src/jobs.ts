@@ -179,8 +179,12 @@ async function scheduleRetry(
   message: string,
 ): Promise<void> {
   const attempt = job.attempt ?? 0;
-  if (attempt >= project.max_retries) return;
-  const delayMinutes = Math.max(1, project.retry_delay_minutes || 5);
+  const settings = await getSettings();
+  const maxRetries = project.max_retries ?? Number(settings.defaultMaxRetries ?? 0);
+  const retryDelayMinutes =
+    project.retry_delay_minutes ?? Number(settings.defaultRetryDelayMinutes ?? 5);
+  if (attempt >= maxRetries) return;
+  const delayMinutes = Math.max(1, retryDelayMinutes || 5);
   const availableAt = new Date(Date.now() + delayMinutes * 60_000);
   const retry = await createJob(project.id, "retry", {
     attempt: attempt + 1,
@@ -188,11 +192,11 @@ async function scheduleRetry(
   });
   appendLog(
     job.id,
-    `Retry ${attempt + 1}/${project.max_retries} scheduled in ${delayMinutes}m (job ${retry.id})`,
+    `Retry ${attempt + 1}/${maxRetries} scheduled in ${delayMinutes}m (job ${retry.id})`,
   );
   appendLog(
     retry.id,
-    `Retry ${attempt + 1}/${project.max_retries} of failed job #${job.id}: ${message}`,
+    `Retry ${attempt + 1}/${maxRetries} of failed job #${job.id}: ${message}`,
   );
 }
 

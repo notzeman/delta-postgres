@@ -31,9 +31,9 @@ export interface Project {
   keep_daily: number | null;
   keep_weekly: number | null;
   keep_monthly: number | null;
-  max_retries: number;
-  retry_delay_minutes: number;
-  compression: string;
+  max_retries: number | null;
+  retry_delay_minutes: number | null;
+  compression: string | null;
   notes: string | null;
   last_backup_at: string | null;
   last_status: string | null;
@@ -146,9 +146,9 @@ export async function ensureSchema(): Promise<void> {
       keep_daily INTEGER,
       keep_weekly INTEGER,
       keep_monthly INTEGER,
-      max_retries INTEGER NOT NULL DEFAULT 0,
-      retry_delay_minutes INTEGER NOT NULL DEFAULT 5,
-      compression TEXT NOT NULL DEFAULT 'auto,zstd,3',
+      max_retries INTEGER,
+      retry_delay_minutes INTEGER,
+      compression TEXT,
       notes TEXT,
       last_backup_at TIMESTAMPTZ,
       last_status TEXT,
@@ -249,11 +249,52 @@ export async function ensureSchema(): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_one_default ON projects(is_default) WHERE is_default = true`,
   );
   await pool.query(
-    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_retries INTEGER`,
   );
   await pool.query(
-    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS retry_delay_minutes INTEGER NOT NULL DEFAULT 5`,
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS retry_delay_minutes INTEGER`,
   );
+  await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS compression TEXT`,
+  );
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'projects'
+          AND column_name = 'max_retries'
+          AND is_nullable = 'NO'
+      ) THEN
+        ALTER TABLE projects ALTER COLUMN max_retries DROP NOT NULL;
+        ALTER TABLE projects ALTER COLUMN max_retries DROP DEFAULT;
+        UPDATE projects SET max_retries = NULL WHERE max_retries = 0;
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'projects'
+          AND column_name = 'retry_delay_minutes'
+          AND is_nullable = 'NO'
+      ) THEN
+        ALTER TABLE projects ALTER COLUMN retry_delay_minutes DROP NOT NULL;
+        ALTER TABLE projects ALTER COLUMN retry_delay_minutes DROP DEFAULT;
+        UPDATE projects SET retry_delay_minutes = NULL WHERE retry_delay_minutes = 5;
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'projects'
+          AND column_name = 'compression'
+          AND is_nullable = 'NO'
+      ) THEN
+        ALTER TABLE projects ALTER COLUMN compression DROP NOT NULL;
+        ALTER TABLE projects ALTER COLUMN compression DROP DEFAULT;
+        UPDATE projects SET compression = NULL WHERE compression = 'auto,zstd,3';
+      END IF;
+    END $$;
+  `);
   await pool.query(
     `ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 0`,
   );

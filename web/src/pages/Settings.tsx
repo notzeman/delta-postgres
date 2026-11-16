@@ -30,6 +30,12 @@ import CronField from "../components/CronField";
 import Pagination from "../components/Pagination";
 import Picker from "../components/Picker";
 import UnsavedChangesGuard from "../components/UnsavedChangesGuard";
+import {
+  COMPRESSION_MECHANISMS,
+  buildCompression,
+  compressionSupportsLevel,
+  parseCompression,
+} from "../compression";
 
 const FALLBACK_TIMEZONES = [
   "UTC",
@@ -87,23 +93,54 @@ export default function Settings() {
     keepDaily: "7",
     keepWeekly: "4",
     keepMonthly: "6",
+    defaultMaxRetries: "0",
+    defaultRetryDelayMinutes: "5",
+    defaultCompression: "auto,zstd,3",
     notificationWebhook: "",
     autoAddProjects: true,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     concurrency: "1",
   });
+  const [retryMode, setRetryMode] = useState("5");
   const [savedForm, setSavedForm] = useState<typeof form | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
+  const { mechanism: compressionMechanism, level: compressionLevel } = parseCompression(
+    form.defaultCompression,
+  );
+  const compressionLevelOptions = compressionSupportsLevel(compressionMechanism)
+    ? Array.from({ length: 9 }, (_, index) => String(index + 1))
+    : [];
+  if (compressionLevel && !compressionLevelOptions.includes(compressionLevel)) {
+    compressionLevelOptions.push(compressionLevel);
+    compressionLevelOptions.sort((a, b) => Number(a) - Number(b));
+  }
+  const compressionMechanismOptions = COMPRESSION_MECHANISMS.some(
+    (option) => option.value === compressionMechanism,
+  )
+    ? COMPRESSION_MECHANISMS
+    : [
+        ...COMPRESSION_MECHANISMS,
+        {
+          value: compressionMechanism,
+          label: compressionMechanism,
+          description: "Existing custom value",
+        },
+      ];
+
   useEffect(() => {
     if (!settingsQuery.data?.settings) return;
     const settings = settingsQuery.data.settings;
+    const delay = String(settings.defaultRetryDelayMinutes ?? 5);
     const next = {
       globalCron: settings.globalCron,
       keepDaily: String(settings.keepDaily),
       keepWeekly: String(settings.keepWeekly),
       keepMonthly: String(settings.keepMonthly),
+      defaultMaxRetries: String(settings.defaultMaxRetries ?? 0),
+      defaultRetryDelayMinutes: delay,
+      defaultCompression: settings.defaultCompression || "auto,zstd,3",
       notificationWebhook: settings.notificationWebhook || "",
       autoAddProjects: settings.autoAddProjects !== false,
       timezone: settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -111,6 +148,7 @@ export default function Settings() {
     };
     setForm(next);
     setSavedForm(next);
+    setRetryMode(["5", "15", "30"].includes(delay) ? delay : "custom");
   }, [settingsQuery.data?.settings]);
 
   const isDirty = savedForm !== null && JSON.stringify(form) !== JSON.stringify(savedForm);
@@ -124,6 +162,9 @@ export default function Settings() {
           keepDaily: Number(form.keepDaily),
           keepWeekly: Number(form.keepWeekly),
           keepMonthly: Number(form.keepMonthly),
+          defaultMaxRetries: Number(form.defaultMaxRetries || 0),
+          defaultRetryDelayMinutes: Number(form.defaultRetryDelayMinutes || 5),
+          defaultCompression: form.defaultCompression,
           notificationWebhook: form.notificationWebhook,
           autoAddProjects: form.autoAddProjects,
           timezone: form.timezone,
@@ -132,7 +173,7 @@ export default function Settings() {
       }),
     onSuccess: () => {
       setSavedForm(form);
-      setNotice("Global settings saved. Project schedules using the global cron were recalculated.");
+      setNotice("Global settings saved. Projects inheriting these defaults will use them on their next run.");
       setError("");
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -153,8 +194,8 @@ export default function Settings() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-slate-100">Settings</h2>
         <p className="mt-1 max-w-2xl text-sm text-slate-400">
-          Global schedule and retention defaults. Any project can override its own schedule and
-          retention independently.
+          Global schedule, retention, retry and compression defaults. Any project can override
+          schedule, retention, retries or compression independently.
         </p>
       </div>
 
@@ -165,7 +206,7 @@ export default function Settings() {
         <Card className="xl:col-span-2">
           <CardHeader
             title="Global defaults"
-            subtitle="Applied to projects that inherit the global schedule"
+            subtitle="Applied to projects that inherit global defaults"
             action={<CalendarClock className="h-4 w-4 text-slate-500" />}
           />
           <form
@@ -203,6 +244,98 @@ export default function Settings() {
                   min={0}
                   value={form.keepMonthly}
                   onChange={(event) => setForm((f) => ({ ...f, keepMonthly: event.target.value }))}
+                />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Retry attempts"
+                hint="How many times to retry a failed backup (0 disables retries)"
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={form.defaultMaxRetries}
+                  onChange={(event) =>
+                    setForm((f) => ({ ...f, defaultMaxRetries: event.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Retry delay" hint="Wait before the next attempt">
+                <div className="space-y-2">
+                  <Picker
+                    value={retryMode}
+                    onChange={(next) => {
+                      setRetryMode(next);
+                      if (next !== "custom") {
+                        setForm((f) => ({ ...f, defaultRetryDelayMinutes: next }));
+                      }
+                    }}
+                    options={[
+                      { value: "5", label: "5 minutes" },
+                      { value: "15", label: "15 minutes" },
+                      { value: "30", label: "30 minutes" },
+                      { value: "custom", label: "Custom" },
+                    ]}
+                    ariaLabel="Default retry delay"
+                  />
+                  {retryMode === "custom" ? (
+                    <Input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={form.defaultRetryDelayMinutes}
+                      onChange={(event) =>
+                        setForm((f) => ({
+                          ...f,
+                          defaultRetryDelayMinutes: event.target.value,
+                        }))
+                      }
+                      placeholder="Minutes"
+                    />
+                  ) : null}
+                </div>
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Compression" hint="Borg compression mechanism">
+                <Picker
+                  value={compressionMechanism}
+                  onChange={(next) =>
+                    setForm((f) => ({
+                      ...f,
+                      defaultCompression: buildCompression(next, compressionLevel),
+                    }))
+                  }
+                  options={compressionMechanismOptions}
+                  ariaLabel="Default compression mechanism"
+                />
+              </Field>
+              <Field
+                label="Compression level"
+                hint={
+                  compressionSupportsLevel(compressionMechanism)
+                    ? "Higher means smaller archives but more CPU"
+                    : "Not used by this mechanism"
+                }
+              >
+                <Picker
+                  value={compressionLevel}
+                  onChange={(next) =>
+                    setForm((f) => ({
+                      ...f,
+                      defaultCompression: buildCompression(compressionMechanism, next),
+                    }))
+                  }
+                  options={compressionLevelOptions.map((level) => ({
+                    value: level,
+                    label: `Level ${level}`,
+                    description: level === "3" ? "Default" : undefined,
+                  }))}
+                  disabled={!compressionSupportsLevel(compressionMechanism)}
+                  placeholder="—"
+                  ariaLabel="Default compression level"
                 />
               </Field>
             </div>
