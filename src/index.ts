@@ -11,6 +11,7 @@ import { registerApi } from "./routes";
 import { startJobWorker, stopJobWorker } from "./jobs";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { runAutoDiscovery } from "./autoDiscover";
+import { ensureDefaultProject } from "./defaultProject";
 import { borgVersion } from "./borg";
 import { dockerVersion } from "./docker";
 import { closeAllSshConnections } from "./sshPool";
@@ -120,6 +121,16 @@ async function main(): Promise<void> {
   });
 
   await initDb();
+  try {
+    const defaultProject = await ensureDefaultProject();
+    if (!defaultProject) {
+      app.log.warn(
+        "Default dashboard database project not initialized: no matching dashboard-db container found",
+      );
+    }
+  } catch (error) {
+    app.log.warn(error, "Failed to initialize default dashboard database project");
+  }
   const [userCount, settings] = await Promise.all([countUsers(), getSettings()]);
   const timezone = String(settings.timezone || config.timezone);
   const concurrency = Number(settings.concurrency || config.concurrency);

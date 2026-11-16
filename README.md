@@ -170,23 +170,16 @@ The dump is extracted from Borg and restored with `pg_restore` (or `psql` for pl
 
 ### Import and export
 
-**Per project** (Project → Export / import dump):
+All transfers are per project and use PostgreSQL custom-format `.dump` files.
 
-- **Export database** takes a fresh `pg_dump -Fc` of the chosen database right now (read-only session, same flags as backups) and downloads it as a `.dump` file. Nothing is stored. It shares the server's single dump slot, so it never runs alongside a backup on the same host; canceling the download stops `pg_dump` on the source.
-- **Import a dump** uploads a single-database `pg_dump` file (`.dump`, `.backup`, `.sql`, `.tar`) and adds it to the project's **Backups** list. Nothing is restored automatically; restore it from the **Restore** tab like any other backup.
+- **Take current snapshot** (project header) runs a live `pg_dump -Fc` of the project's default database and downloads it. Nothing is stored.
+- **Import dump file** (`+` in the **Backups** tab) accepts a single `.dump` file, validates the `PGDMP` header, and adds it to the project's **Backups** list. The exact filename is kept as the backup label. Nothing is restored automatically; restore it from the **Restore** tab like any other backup.
+- **Download** on a backup row extracts the selected `databases/<name>.dump` and downloads it. If an archive contains multiple database dumps, a picker lists each `.dump`.
+- Imported rows show an **imported** pill. Use the pen icon on a backup row to rename its label inline; the internal Borg archive name stays stable.
 
-**Borg data** (Import / Export page):
+A Borg archive is one backup run: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per selected database. Projects that back up a single database therefore have exactly one `.dump` per archive. If the project's **Databases** setting lists multiple databases, the archive contains one `.dump` per database.
 
-| Operation | Format | Where |
-|---|---|---|
-| Catalog only | JSON | Import / Export → Catalog |
-| Single project repository | `.tar` of the encrypted repo | Import / Export → Export |
-| Import an archive or repository | `.tar` upload | Import / Export → Import |
-| All repositories | `.tar` of `backups/` | Import / Export → All repositories |
-
-An archive is the whole Borg archive, not a single dump: it contains `globals.sql`, `manifest.json` and one `databases/<name>.dump` per database. Archives are imported with `borg import-tar`. Importing a full repository replaces the project's repo and clears its Borg cache so a relocated repo can be adopted. Repositories must use the same `BORG_PASSPHRASE`.
-
-Imported archives keep their original timestamps and are subject to retention. If an imported archive falls on the same day as an existing one, the next `borg prune` may remove one of them. The catalog reconciles with Borg automatically.
+Imported archives keep their original timestamps and are subject to retention. If an imported archive falls on the same day as an existing one, the next `borg prune` may remove one of them.
 
 ## Configuration
 
@@ -297,9 +290,9 @@ Backup and restore re-resolve the container by name, then by Compose project and
 </details>
 
 <details>
-<summary>An archive disappears after import or prune</summary>
+<summary>An archive disappears after prune</summary>
 
-Retention may have pruned an imported archive that shared a day with another one. Refresh the archive list from **Restore** or **Backups → Sync** and choose an archive that still exists. Leave `.tar` out of imported archive names.
+Retention may have pruned an imported archive that shared a day with another one. Refresh the archive list from **Restore** or **Backups → Sync** and choose an archive that still exists.
 
 </details>
 
@@ -373,13 +366,12 @@ docker-compose.yml   Dashboard + metadata Postgres
 | `POST` | `/api/projects/:id/backup` | Queue a manual backup |
 | `POST` | `/api/backups` | Queue all enabled projects |
 | `GET` | `/api/projects/:id/archives` | Archive catalog |
+| `PATCH` | `/api/projects/:id/archives/:name` | Rename an archive label |
+| `GET` | `/api/projects/:id/archives/:name/dump` | Download a database `.dump` from an archive |
 | `POST` | `/api/projects/:id/archives/:name/verify` | Verify an archive (`borg check --verify-data`) |
 | `POST` | `/api/projects/:id/restore` | Restore a database |
-| `GET` | `/api/projects/:id/archives/:name/export` | Export an archive as tar |
-| `GET` | `/api/projects/:id/export` | Export a repository as tar |
-| `GET` | `/api/export/catalog` | Export the catalog as JSON |
-| `GET` | `/api/export/all` | Export all repositories |
-| `POST` | `/api/import` | Import an archive or repository tar |
+| `GET` | `/api/projects/:id/dump` | Take a live `.dump` snapshot |
+| `POST` | `/api/projects/:id/import-dump` | Import a `.dump` file |
 | `GET` | `/api/jobs` | Job history |
 | `GET` | `/api/jobs/:id` | Job details and log tail |
 | `GET/PATCH` | `/api/settings` | Global defaults |

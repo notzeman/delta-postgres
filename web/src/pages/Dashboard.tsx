@@ -572,6 +572,14 @@ export default function Dashboard() {
                           {project.pg_user} · {project.archiveCount ?? 0} archives ·{" "}
                           {formatBytes(project.repoBytes)}
                         </p>
+                        {project.repoPath ? (
+                          <p
+                            className="mt-0.5 truncate font-mono text-[11px] text-slate-600"
+                            title={project.repoPath}
+                          >
+                            {project.repoPath}
+                          </p>
+                        ) : null}
                       </Link>
                       <div className="flex items-center gap-4 text-right">
                         <div>

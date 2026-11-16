@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -7,7 +7,9 @@ import {
   Database,
   Download,
   FileArchive,
+  Pencil,
   Play,
+  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -32,6 +34,7 @@ import {
   ErrorBox,
   Field,
   Input,
+  Modal,
   Spinner,
   StatusBadge,
   SuccessBox,
@@ -331,14 +334,16 @@ export default function ProjectDetail() {
     label: "Ready to restore",
     done: false,
   });
-  const [exportDb, setExportDb] = useState("");
-  const [transferArchive, setTransferArchive] = useState(
-    `imported-${new Date().toISOString().replace(/[:.]/g, "-")}`,
-  );
-  const [transferFile, setTransferFile] = useState<File | null>(null);
-  const [transferDrag, setTransferDrag] = useState(false);
-  const [transferError, setTransferError] = useState("");
-  const [importedArchive, setImportedArchive] = useState("");
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const renameCancelRef = useRef(false);
+  const [editingArchive, setEditingArchive] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
+  const [downloadState, setDownloadState] = useState<{
+    archive: string;
+    databases: ArchiveDatabase[];
+    selected: string;
+  } | null>(null);
+  const [downloadLoading, setDownloadLoading] = useState<string | null>(null);
   const [archiveToDelete, setArchiveToDelete] = useState<string | null>(null);
   const [confirmIgnore, setConfirmIgnore] = useState(false);
 
@@ -357,11 +362,6 @@ export default function ProjectDetail() {
     container?.databases?.find((db) => db.name !== "postgres")?.name ||
     "";
   const safePrimary = (primaryDb || "database").replace(/[^a-zA-Z0-9_]/g, "_");
-  const exportDatabases = (container?.databases || []).filter((db) => db.name !== "postgres");
-  const exportDbValue =
-    exportDb && exportDatabases.some((db) => db.name === exportDb)
-      ? exportDb
-      : exportDatabases.find((db) => db.name === primaryDb)?.name || exportDatabases[0]?.name || "";
   const selectedDump =
     archiveDatabases?.find((db) => db.name === primaryDb) ||
     archiveDatabases?.find((db) => db.name !== "postgres") ||
@@ -503,15 +503,14 @@ export default function ProjectDetail() {
   };
 
   const importDump = useMutation({
-    mutationFn: async () => {
-      if (!transferFile) throw new Error("Choose a PostgreSQL dump file first");
+    mutationFn: async (file: File) => {
       const form = new FormData();
-      if (transferArchive.trim()) form.append("archiveName", transferArchive.trim());
-      form.append("file", transferFile);
+      form.append("file", file);
       return api<{
         ok: boolean;
         archive: {
           name: string;
+          label?: string;
           database: string;
           memberPath: string;
           format: string;
@@ -524,21 +523,78 @@ export default function ProjectDetail() {
       });
     },
     onSuccess: async (data) => {
-      setTransferError("");
-      setTransferFile(null);
-      setImportedArchive(data.archive.name);
-      setTransferArchive(`imported-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+      snackbar.success(
+        `Dump imported as "${data.archive?.label || data.archive?.name || "dump"}".`,
+      );
       await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
-      queryClient.invalidateQueries({ queryKey: ["archive-databases", projectId] });
-      snackbar.success(`Dump added to backups as "${data.archive.name}".`);
+      queryClient.invalidateQueries({ queryKey: ["repo-size"] });
     },
     onError: (err) => {
-      setImportedArchive("");
-      setTransferError(err instanceof Error ? err.message : "Dump import failed");
+      snackbar.error(err instanceof Error ? err.message : "Dump import failed");
     },
   });
+
+  const renameArchive = useMutation({
+    mutationFn: ({ name, label }: { name: string; label: string }) =>
+      api(`/projects/${projectId}/archives/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ label }),
+      }),
+    onSuccess: async () => {
+      setEditingArchive(null);
+      await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+    onError: (err) => {
+      snackbar.error(err instanceof Error ? err.message : "Rename failed");
+    },
+  });
+
+  const saveArchiveLabel = (archive: Archive) => {
+    if (renameCancelRef.current) {
+      renameCancelRef.current = false;
+      return;
+    }
+    const label = editingLabel.trim();
+    const original = archive.label || archive.name;
+    if (!label || label === original) {
+      setEditingArchive(null);
+      return;
+    }
+    renameArchive.mutate({ name: archive.name, label });
+  };
+
+  const openArchiveDownload = async (archive: Archive) => {
+    setDownloadLoading(archive.name);
+    try {
+      const data = await api<{ databases: ArchiveDatabase[] }>(
+        `/projects/${projectId}/archives/${encodeURIComponent(archive.name)}/databases`,
+      );
+      const dumps = data.databases.filter((db) =>
+        db.path.toLowerCase().endsWith(".dump"),
+      );
+      if (dumps.length === 0) {
+        snackbar.error("This archive does not contain a .dump file.");
+        return;
+      }
+      if (dumps.length === 1) {
+        window.location.href = downloadUrl(
+          `/projects/${projectId}/archives/${encodeURIComponent(archive.name)}/dump?database=${encodeURIComponent(dumps[0].name)}`,
+        );
+        return;
+      }
+      setDownloadState({
+        archive: archive.name,
+        databases: dumps,
+        selected: dumps[0].name,
+      });
+    } catch (err) {
+      snackbar.error(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloadLoading(null);
+    }
+  };
 
   const refreshContainer = useMutation({
     mutationFn: () =>
@@ -626,9 +682,26 @@ export default function ProjectDetail() {
               <Play className="h-4 w-4" /> Back up now
             </Button>
           )}
-          <Button onClick={() => setTab("transfer")}>
-            <Download className="h-4 w-4" /> Export / import dump
-          </Button>
+          <a
+            href={
+              container?.state === "running"
+                ? downloadUrl(`/projects/${project.id}/dump`)
+                : "#"
+            }
+            className={cn(
+              "btn-secondary",
+              container?.state !== "running" &&
+                "pointer-events-none opacity-50",
+            )}
+            aria-disabled={container?.state !== "running"}
+            title={
+              container?.state === "running"
+                ? `Download a live .dump of ${primaryDb || "the default database"}`
+                : "Container is not running"
+            }
+          >
+            <Download className="h-4 w-4" /> Take current snapshot
+          </a>
           <Button onClick={() => setTab("settings")}>
             <SlidersHorizontal className="h-4 w-4" /> Settings
           </Button>
@@ -642,7 +715,6 @@ export default function ProjectDetail() {
         tabs={[
           { id: "overview", label: "Overview" },
           { id: "backups", label: "Backups", count: archives.length },
-          { id: "transfer", label: "Import / export" },
           { id: "restore", label: "Restore" },
           { id: "settings", label: "Settings" },
           { id: "logs", label: "Jobs & logs", count: jobs.length },
@@ -765,7 +837,7 @@ export default function ProjectDetail() {
               </p>
             ) : (
               <p className="border-t border-white/5 px-5 py-3 text-[11px] text-slate-500">
-                Backing up all discovered databases dynamically.
+                Backing up the project&apos;s primary database.
               </p>
             )}
           </Card>
@@ -778,9 +850,33 @@ export default function ProjectDetail() {
             title="Borg archives"
             subtitle="Encrypted, deduplicated snapshots in this repository"
             action={
-              <Button size="sm" onClick={() => syncArchives.mutate()} loading={syncArchives.isPending}>
-                <RefreshCw className="h-3.5 w-3.5" /> Sync
-              </Button>
+              <div className="flex items-center gap-2">
+                <Tooltip content="Import dump file">
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={() => importInputRef.current?.click()}
+                    loading={importDump.isPending}
+                    aria-label="Import dump file"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </Tooltip>
+                <Button size="sm" onClick={() => syncArchives.mutate()} loading={syncArchives.isPending}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Sync
+                </Button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".dump"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) importDump.mutate(file);
+                  }}
+                />
+              </div>
             }
           />
           {archives.length === 0 ? (
@@ -814,7 +910,47 @@ export default function ProjectDetail() {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2">
                           <FileArchive className="h-3.5 w-3.5 text-accent-400/70" />
-                          <span className="font-mono text-xs text-slate-200">{archive.name}</span>
+                          {editingArchive === archive.name ? (
+                            <Input
+                              autoFocus
+                              value={editingLabel}
+                              onChange={(event) => setEditingLabel(event.target.value)}
+                              onBlur={() => saveArchiveLabel(archive)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  event.currentTarget.blur();
+                                } else if (event.key === "Escape") {
+                                  renameCancelRef.current = true;
+                                  setEditingArchive(null);
+                                }
+                              }}
+                              className="h-7 w-56 py-1 font-mono text-xs"
+                              aria-label="Backup name"
+                            />
+                          ) : (
+                            <>
+                              <span
+                                className="max-w-[20rem] truncate font-mono text-xs text-slate-200"
+                                title={archive.label || archive.name}
+                              >
+                                {archive.label || archive.name}
+                              </span>
+                              {archive.imported ? <Badge tone="blue">imported</Badge> : null}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  renameCancelRef.current = false;
+                                  setEditingArchive(archive.name);
+                                  setEditingLabel(archive.label || archive.name);
+                                }}
+                                className="rounded p-1 text-slate-500 opacity-0 transition hover:bg-white/5 hover:text-slate-200 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                                aria-label="Rename backup"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                       <td className="px-3 py-3 text-slate-400">{fmtDate(archive.created_at)}</td>
@@ -832,16 +968,16 @@ export default function ProjectDetail() {
                       </td>
                       <td className="px-5 py-3">
                         <div className="flex items-center justify-end gap-1">
-                          <Tooltip content="Export archive as tar">
-                            <a
-                              href={downloadUrl(
-                                `/projects/${project.id}/archives/${encodeURIComponent(archive.name)}/export`,
-                              )}
-                              className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-200"
-                              aria-label="Export archive"
+                          <Tooltip content="Download .dump">
+                            <button
+                              type="button"
+                              onClick={() => openArchiveDownload(archive)}
+                              disabled={downloadLoading === archive.name}
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-200 disabled:opacity-50"
+                              aria-label="Download dump"
                             >
                               <Download className="h-3.5 w-3.5" />
-                            </a>
+                            </button>
                           </Tooltip>
                           <Tooltip content="Verify archive integrity">
                             <button
@@ -887,153 +1023,6 @@ export default function ProjectDetail() {
         </Card>
       ) : null}
 
-      {tab === "transfer" ? (
-        <div className="grid gap-6 xl:grid-cols-2">
-          <Card>
-            <CardHeader
-              title="Export database"
-              subtitle="Take a fresh pg_dump now and download it"
-              action={<Download className="h-4 w-4 text-slate-500" />}
-            />
-            <div className="space-y-4 p-5">
-              <Field
-                label="Database"
-                hint="Dumped live from the running container in a read-only session."
-              >
-                <Picker
-                  value={exportDbValue}
-                  onChange={setExportDb}
-                  options={exportDatabases.map((db) => ({
-                    value: db.name,
-                    label: db.name,
-                    description: formatBytes(db.sizeBytes),
-                    icon: <Database className="h-4 w-4" />,
-                  }))}
-                  placeholder={
-                    container?.state === "running" ? "Select a database…" : "Container is not running"
-                  }
-                  disabled={container?.state !== "running" || exportDatabases.length === 0}
-                  ariaLabel="Database to export"
-                />
-              </Field>
-              <div className="flex items-center justify-end gap-3">
-                <a
-                  href={
-                    exportDbValue
-                      ? downloadUrl(
-                          `/projects/${project.id}/dump?database=${encodeURIComponent(exportDbValue)}`,
-                        )
-                      : "#"
-                  }
-                  className={cn(
-                    "btn-primary shrink-0 text-xs",
-                    (!exportDbValue || container?.state !== "running") &&
-                      "pointer-events-none opacity-50",
-                  )}
-                >
-                  <Download className="h-3.5 w-3.5" /> Download dump
-                </a>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="Import a dump"
-              subtitle="Add a PostgreSQL dump to this project's backups"
-              action={<UploadCloud className="h-4 w-4 text-slate-500" />}
-            />
-            <form
-              className="space-y-4 p-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setImportedArchive("");
-                setTransferError("");
-                importDump.mutate();
-              }}
-            >
-              <label
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setTransferDrag(true);
-                }}
-                onDragLeave={() => setTransferDrag(false)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setTransferDrag(false);
-                  const dropped = event.dataTransfer.files?.[0];
-                  if (dropped) setTransferFile(dropped);
-                }}
-                className={cn(
-                  "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center transition",
-                  transferDrag
-                    ? "border-accent-500/60 bg-accent-500/5"
-                    : "border-white/10 bg-ink-950/40 hover:border-white/20 hover:bg-white/[0.02]",
-                )}
-              >
-                <div className="rounded-full border border-white/10 bg-white/5 p-2.5 text-accent-400">
-                  <UploadCloud className="h-5 w-5" />
-                </div>
-                <p className="text-xs font-medium text-slate-200">
-                  {transferFile ? transferFile.name : "Drop a .dump, .backup, .sql, or .tar file here"}
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  {transferFile ? formatBytes(transferFile.size) : "Single-database pg_dump · up to 50 GB"}
-                </p>
-                <input
-                  type="file"
-                  className="sr-only"
-                  accept=".sql,.dump,.backup,.tar,application/sql,application/octet-stream"
-                  onChange={(event) => setTransferFile(event.target.files?.[0] || null)}
-                />
-              </label>
-
-              <Field label="Backup name" hint="Shown in the Backups list.">
-                <Input
-                  value={transferArchive}
-                  onChange={(event) => setTransferArchive(event.target.value)}
-                  className="font-mono"
-                />
-              </Field>
-
-              {transferError ? <ErrorBox message={transferError} /> : null}
-              {importedArchive ? (
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-300">
-                  <span className="truncate">
-                    Added to backups as <span className="font-mono">{importedArchive}</span>.
-                  </span>
-                  <Button
-                    size="sm"
-                    type="button"
-                    onClick={() => {
-                      setRestore({ archive: importedArchive, overwrite: false });
-                      setTab("restore");
-                    }}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" /> Restore it
-                  </Button>
-                </div>
-              ) : null}
-
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] text-slate-500">
-                  The dump is only stored as a backup. Nothing is restored until you do it from the
-                  Restore tab.
-                </p>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  loading={importDump.isPending}
-                  disabled={!transferFile}
-                >
-                  <UploadCloud className="h-4 w-4" /> Import dump
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      ) : null}
-
       {tab === "restore" ? (
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>
@@ -1066,7 +1055,7 @@ export default function ProjectDetail() {
                     }}
                     options={archives.map((archive) => ({
                       value: archive.name,
-                      label: archive.name,
+                      label: archive.label || archive.name,
                       description: fmtDate(archive.created_at),
                       icon: <FileArchive className="h-4 w-4" />,
                     }))}
@@ -1296,7 +1285,7 @@ export default function ProjectDetail() {
               </div>
               <Field
                 label="Databases"
-                hint="Comma-separated. Leave empty to back up every database dynamically."
+                hint="Comma-separated. Leave empty to back up the project's primary database."
               >
                 <Input
                   value={form.databases}
@@ -1596,6 +1585,46 @@ export default function ProjectDetail() {
         This permanently removes the archive from the project&apos;s Borg repository. It cannot
         be undone.
       </ConfirmModal>
+
+      <Modal
+        open={Boolean(downloadState)}
+        onClose={() => setDownloadState(null)}
+        title="Download .dump"
+        subtitle="Choose the database dump to download"
+      >
+        {downloadState ? (
+          <div className="space-y-4">
+            <Field label="Database">
+              <Picker
+                value={downloadState.selected}
+                onChange={(selected) =>
+                  setDownloadState((current) =>
+                    current ? { ...current, selected } : current,
+                  )
+                }
+                options={downloadState.databases.map((db) => ({
+                  value: db.name,
+                  label: db.name,
+                  description: formatBytes(db.sizeBytes),
+                  icon: <Database className="h-4 w-4" />,
+                }))}
+                ariaLabel="Database dump"
+              />
+            </Field>
+            <div className="flex justify-end">
+              <a
+                href={downloadUrl(
+                  `/projects/${projectId}/archives/${encodeURIComponent(downloadState.archive)}/dump?database=${encodeURIComponent(downloadState.selected)}`,
+                )}
+                className="btn-primary"
+                onClick={() => setDownloadState(null)}
+              >
+                <Download className="h-4 w-4" /> Download .dump
+              </a>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <ConfirmModal
         open={confirmIgnore}

@@ -54,15 +54,13 @@ import {
   borgVersion,
   repoSizeBytes,
   invalidateRepoSize,
-  projectBackupDir,
+  repoPath,
   listArchiveFiles,
   listArchives,
   createArchive,
   deleteArchive,
   checkArchive,
-  exportRepoStream,
-  exportAllStream,
-  importArchiveFromFile,
+  extractArchiveFile,
   restoreDatabase,
 } from "./borg";
 import {
@@ -81,7 +79,7 @@ import {
   recomputeProjectSchedule,
   recomputeAllSchedules,
 } from "./scheduler";
-import { runCommand, slugify, formatBytes, ensureDir, rmrf, fileSize, hashFile } from "./utils";
+import { slugify, formatBytes, ensureDir, rmrf, fileSize, hashFile } from "./utils";
 
 function sendError(reply: FastifyReply, code: number, message: string) {
   return reply.code(code).send({ error: message });
@@ -826,6 +824,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         return {
           ...project,
           repoBytes,
+          repoPath: repoPath(project),
           archiveCount: Number(archives.rows[0]?.count || 0),
           containerState: container?.state || "missing",
           containerImage: container?.image || project.container_image,
@@ -1293,6 +1292,87 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
   });
 
+  app.patch("/api/projects/:id/archives/:name", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const name = archiveName(request);
+    const parsed = z
+      .object({ label: z.string().trim().min(1).max(200) })
+      .safeParse(request.body);
+    if (!parsed.success) return sendError(reply, 400, "A label is required");
+    const result = await pool.query(
+      `UPDATE archives SET label = $1 WHERE project_id = $2 AND name = $3`,
+      [parsed.data.label, project.id, name],
+    );
+    if (!result.rowCount) return sendError(reply, 404, "Archive not found");
+    await audit(getActor(request), "archive.rename", `${project.slug}/${name}`, {
+      label: parsed.data.label,
+    });
+    return { ok: true, label: parsed.data.label };
+  });
+
+  app.get("/api/projects/:id/archives/:name/dump", async (request, reply) => {
+    const project = await requireProject(request, reply);
+    if (!project) return;
+    const name = archiveName(request);
+    const database = String((request.query as any)?.database || "").trim();
+    if (!database) return sendError(reply, 400, "A database is required");
+
+    let match: string | undefined;
+    try {
+      const files = await listArchiveFiles(project, name);
+      match = files
+        .map((file) => ({ ...file, path: file.path.replace(/^\.\//, "") }))
+        .find(
+          (file) =>
+            file.type === "file" &&
+            file.path === `databases/${database}.dump`,
+        )?.path;
+    } catch (error) {
+      return sendError(
+        reply,
+        500,
+        error instanceof Error ? error.message : "Unable to read archive",
+      );
+    }
+    if (!match) {
+      return sendError(reply, 404, `No .dump file for database "${database}"`);
+    }
+
+    ensureDir(config.stagingRoot);
+    const tempFile = path.join(
+      config.stagingRoot,
+      `archive-dump-${Date.now()}-${Math.random().toString(36).slice(2)}.dump`,
+    );
+    try {
+      await extractArchiveFile(project, name, match, tempFile, () => {});
+      const meta = await pool.query<{ label: string | null }>(
+        `SELECT label FROM archives WHERE project_id = $1 AND name = $2`,
+        [project.id, name],
+      );
+      const display = (meta.rows[0]?.label || name).replace(/\.dump$/i, "");
+      const filename = `${project.slug}-${display}-${database}.dump`.replace(
+        /[^a-zA-Z0-9_.-]/g,
+        "_",
+      );
+      reply.header("Content-Type", "application/octet-stream");
+      reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+      reply.header("Cache-Control", "no-store");
+      const stream = fs.createReadStream(tempFile);
+      const cleanup = () => fs.rm(tempFile, { force: true }, () => {});
+      stream.on("close", cleanup);
+      stream.on("error", cleanup);
+      return reply.send(stream);
+    } catch (error) {
+      fs.rm(tempFile, { force: true }, () => {});
+      return sendError(
+        reply,
+        500,
+        error instanceof Error ? error.message : "Dump download failed",
+      );
+    }
+  });
+
   app.delete("/api/projects/:id/archives/:name", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
@@ -1537,218 +1617,35 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get("/api/projects/:id/export", async (request, reply) => {
-    const project = await requireProject(request, reply);
-    if (!project) return;
-    const root = projectBackupDir(project);
-    if (!fs.existsSync(root)) return sendError(reply, 404, "No repository on disk for this project");
-    const child = exportRepoStream(project);
-    reply.header("Content-Type", "application/x-tar");
-    reply.header("Content-Disposition", `attachment; filename="${project.slug}-borg-repo.tar"`);
-    child.stderr.on("data", (c: Buffer) => app.log.warn(c.toString()));
-    return reply.send(child.stdout);
-  });
-
-  // ---------- Export / import ----------
-  app.get("/api/export/catalog", async (request, reply) => {
-    const projects = await getProjects();
-    const archives = await pool.query(
-      `SELECT project_id, name, created_at, original_size, deduplicated_size, size_bytes, file_count
-       FROM archives ORDER BY created_at DESC`,
-    );
-    const catalog = {
-      format: "delta-postgres-catalog-v1",
-      exportedAt: new Date().toISOString(),
-      appVersion: config.appVersion,
-      projects: projects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        slug: p.slug,
-        source: p.source,
-        enabled: p.enabled,
-        container: p.container_name,
-        image: p.container_image,
-        composeProject: p.compose_project,
-        pgUser: p.pg_user,
-        databases: p.databases,
-        scheduleCron: p.schedule_cron,
-        retention: {
-          daily: p.keep_daily,
-          weekly: p.keep_weekly,
-          monthly: p.keep_monthly,
-        },
-        compression: p.compression,
-        notes: p.notes,
-      })),
-      archives: archives.rows,
-    };
-    reply.header("Content-Type", "application/json");
-    reply.header("Content-Disposition", "attachment; filename=\"delta-postgres-catalog.json\"");
-    await audit(getActor(request), "export.catalog");
-    return catalog;
-  });
-
-  app.get("/api/export/all", async (request, reply) => {
-    // Keep a small catalog alongside the repositories.
-    try {
-      const projects = await getProjects();
-      fs.writeFileSync(
-        path.join(config.backupRoot, "_catalog.json"),
-        JSON.stringify(
-          {
-            format: "delta-postgres-catalog-v1",
-            exportedAt: new Date().toISOString(),
-            projects: projects.map((p) => ({
-              name: p.name,
-              slug: p.slug,
-              container: p.container_name,
-              image: p.container_image,
-              pgUser: p.pg_user,
-              databases: p.databases,
-              scheduleCron: p.schedule_cron,
-            })),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch {
-      /* best effort */
-    }
-    const child = exportAllStream();
-    reply.header("Content-Type", "application/x-tar");
-    reply.header("Content-Disposition", "attachment; filename=\"delta-postgres-all-repos.tar\"");
-    child.stderr.on("data", (c: Buffer) => app.log.warn(c.toString()));
-    await audit(getActor(request), "export.all");
-    return reply.send(child.stdout);
-  });
-
-  app.post("/api/import", async (request, reply) => {
-    const data = await request.file();
-    if (!data) return sendError(reply, 400, "A tar file is required");
-    const fields = data.fields as Record<string, any>;
-    const fieldValue = (name: string): string | undefined => {
-      const field = fields?.[name];
-      if (!field) return undefined;
-      if (Array.isArray(field)) return field[0]?.value;
-      return field.value;
-    };
-    const projectIdValue = fieldValue("projectId");
-    const mode = fieldValue("mode") || "archive";
-    const rawArchiveName = fieldValue("archiveName");
-    const archiveNameValue = rawArchiveName
-      ?.replace(/\.(tar|tgz|tar\.gz)$/i, "")
-      .trim();
-    const parsedProjectId = Number(projectIdValue);
-    if (!projectIdValue || !Number.isFinite(parsedProjectId)) {
-      data.file.resume();
-      return sendError(reply, 400, "A valid projectId is required");
-    }
-    const project = await getProject(parsedProjectId);
-    if (!project) {
-      // Drain and discard the upload on validation failure.
-      data.file.resume();
-      return sendError(reply, 400, "A valid projectId is required");
-    }
-    if (mode === "archive" && !archiveNameValue) {
-      data.file.resume();
-      return sendError(reply, 400, "archiveName is required for archive import");
-    }
-    if (archiveNameValue && (archiveNameValue.includes("/") || archiveNameValue.includes(".."))) {
-      data.file.resume();
-      return sendError(reply, 400, "archiveName cannot contain slashes or '..'");
-    }
-
-    ensureDir(config.stagingRoot);
-    const tempFile = path.join(
-      config.stagingRoot,
-      `import-${Date.now()}-${(data.filename || "upload.tar").replace(/[^a-zA-Z0-9_.-]/g, "_")}`,
-    );
-    try {
-      await pipeline(data.file, fs.createWriteStream(tempFile));
-      const lines: string[] = [];
-      const log = (line: string) => lines.push(line);
-
-      if (mode === "archive") {
-        await importArchiveFromFile(project, archiveNameValue!, tempFile, log);
-        await syncProjectArchives(project);
-      } else {
-        const tempDir = path.join(config.stagingRoot, `extract-${Date.now()}`);
-        ensureDir(tempDir);
-        const list = await runCommand("tar", ["-tf", tempFile], { maxBuffer: 32 * 1024 * 1024 });
-        if (list.code !== 0) throw new Error(list.stderr || "Invalid tar archive");
-        const entries = list.stdout.split("\n").filter(Boolean);
-        if (entries.some((e) => e.startsWith("/") || e.split("/").includes(".."))) {
-          throw new Error("Refusing to import an archive with unsafe paths");
-        }
-        const extract = await runCommand("tar", ["-xf", tempFile, "-C", tempDir, "--no-same-owner"]);
-        if (extract.code !== 0) throw new Error(extract.stderr || "Extraction failed");
-
-        const candidates = [
-          path.join(tempDir, project.slug, "repo"),
-          path.join(tempDir, "repo"),
-          path.join(tempDir, "config") ? tempDir : "",
-        ];
-        let sourceRepo = candidates.find((p) => p && fs.existsSync(path.join(p, "config")));
-        if (!sourceRepo) {
-          const first = fs.readdirSync(tempDir)[0];
-          if (first) {
-            const nested = path.join(tempDir, first, "repo");
-            if (fs.existsSync(path.join(nested, "config"))) sourceRepo = nested;
-          }
-        }
-        if (!sourceRepo) throw new Error("Uploaded archive does not contain a Borg repository");
-        const targetDir = projectBackupDir(project);
-        ensureDir(targetDir);
-        rmrf(path.join(targetDir, "repo"));
-        // Clear per-project Borg cache/security metadata; the imported repository may
-        // have been copied from another location or project.
-        rmrf(path.join(config.dataDir, "borg", project.slug));
-        fs.cpSync(sourceRepo, path.join(targetDir, "repo"), { recursive: true });
-        rmrf(tempDir);
-        await syncProjectArchives(project);
-      }
-      invalidateRepoSize(project);
-      await audit(getActor(request), "import", project.slug, { mode, archive: archiveNameValue });
-      return { ok: true, output: lines.join("\n") };
-    } catch (error) {
-      return sendError(reply, 500, error instanceof Error ? error.message : "Import failed");
-    } finally {
-      try {
-        fs.rmSync(tempFile, { force: true });
-      } catch {
-        /* ignore */
-      }
-    }
-  });
-
   app.post("/api/projects/:id/import-dump", async (request, reply) => {
     const project = await requireProject(request, reply);
     if (!project) return;
     const data = await request.file();
-    if (!data) return sendError(reply, 400, "A PostgreSQL dump file is required");
-    const fields = data.fields as Record<string, any>;
-    const fieldValue = (name: string): string | undefined => {
-      const field = fields?.[name];
-      if (!field) return undefined;
-      if (Array.isArray(field)) return field[0]?.value;
-      return field.value;
-    };
+    if (!data) return sendError(reply, 400, "A PostgreSQL .dump file is required");
+
+    const originalName = path.basename((data.filename || "imported.dump").trim());
+    if (!/\.dump$/i.test(originalName)) {
+      data.file.resume();
+      return sendError(reply, 400, "Only custom-format .dump files are supported");
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const rawName = fieldValue("archiveName");
-    const baseName =
-      (rawName || `imported-${timestamp}`)
-        .replace(/\.(tar|tgz|tar\.gz|sql|dump|backup)$/i, "")
-        .trim() || `imported-${timestamp}`;
+    const stem =
+      originalName.replace(/\.dump$/i, "").trim() || `imported-${timestamp}`;
+    const safeDb = (stem.replace(/[^a-zA-Z0-9_.-]/g, "_") || "database").slice(
+      0,
+      120,
+    );
+    const baseName = (safeDb || `imported-${timestamp}`).slice(0, 120);
     if (baseName.includes("/") || baseName.includes("..")) {
       data.file.resume();
-      return sendError(reply, 400, "archiveName cannot contain slashes or '..'");
+      return sendError(reply, 400, "Invalid dump file name");
     }
 
     ensureDir(config.stagingRoot);
     const tempFile = path.join(
       config.stagingRoot,
-      `dump-upload-${Date.now()}-${(data.filename || "dump").replace(/[^a-zA-Z0-9_.-]/g, "_")}`,
+      `dump-upload-${Date.now()}-${originalName.replace(/[^a-zA-Z0-9_.-]/g, "_")}`,
     );
     const staging = path.join(config.stagingRoot, `import-dump-${Date.now()}`);
     try {
@@ -1756,35 +1653,19 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       const sizeBytes = fileSize(tempFile);
       if (!sizeBytes) throw new Error("Uploaded dump file is empty");
 
-      const originalName = (data.filename || "").toLowerCase();
-      let ext = "dump";
-      let format: "plain" | "custom" | "tar" = "custom";
-      if (originalName.endsWith(".sql")) {
-        ext = "sql";
-        format = "plain";
-      } else if (originalName.endsWith(".tar")) {
-        ext = "tar";
-        format = "tar";
-      } else {
-        const fd = fs.openSync(tempFile, "r");
-        const header = Buffer.alloc(5);
-        const read = fs.readSync(fd, header, 0, 5, 0);
-        fs.closeSync(fd);
-        if (read === 5 && header.toString("utf8") === "PGDMP") {
-          ext = "dump";
-          format = "custom";
-        } else if (originalName.endsWith(".dump") || originalName.endsWith(".backup")) {
-          ext = "dump";
-          format = "custom";
-        } else {
-          ext = "sql";
-          format = "plain";
-        }
+      const fd = fs.openSync(tempFile, "r");
+      const header = Buffer.alloc(5);
+      const read = fs.readSync(fd, header, 0, 5, 0);
+      fs.closeSync(fd);
+      if (read !== 5 || header.toString("utf8") !== "PGDMP") {
+        return sendError(
+          reply,
+          400,
+          "Only custom-format .dump files are supported",
+        );
       }
 
-      const database = project.pg_default_db || "database";
-      const safeDb = database.replace(/[^a-zA-Z0-9_.-]/g, "_");
-      const memberPath = `databases/${safeDb}.${ext}`;
+      const memberPath = `databases/${safeDb}.dump`;
       ensureDir(path.join(staging, "databases"));
       fs.copyFileSync(tempFile, path.join(staging, memberPath));
       const sha256 = await hashFile(path.join(staging, memberPath));
@@ -1797,11 +1678,11 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
             appVersion: config.appVersion,
             source: "raw-dump-import",
             project: { id: project.id, name: project.name, slug: project.slug },
-            database,
-            sourceFormat: format,
+            database: safeDb,
+            sourceFormat: "custom",
             databases: [
               {
-                name: database,
+                name: safeDb,
                 file: memberPath,
                 sizeBytes,
                 sha256,
@@ -1814,7 +1695,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         ),
       );
 
-      const existing = new Set((await listArchives(project)).map((archive) => archive.name));
+      const existing = new Set(
+        (await listArchives(project)).map((archive) => archive.name),
+      );
       let archiveName = baseName;
       let suffix = 1;
       while (existing.has(archiveName)) {
@@ -1826,12 +1709,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         logLines.push(line),
       );
       await pool.query(
-        `INSERT INTO archives(project_id, job_id, name, created_at, size_bytes,
-           original_size, deduplicated_size, file_count)
-         VALUES($1, NULL, $2, now(), $3, $4, $5, $6)`,
+        `INSERT INTO archives(project_id, job_id, name, label, imported, created_at,
+           size_bytes, original_size, deduplicated_size, file_count)
+         VALUES($1, NULL, $2, $3, true, now(), $4, $5, $6, $7)`,
         [
           project.id,
           archiveName,
+          originalName,
           stats.compressedSize,
           stats.originalSize,
           stats.deduplicatedSize,
@@ -1841,17 +1725,18 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       invalidateRepoSize(project);
       await audit(getActor(request), "import.dump", project.slug, {
         archiveName,
-        database,
-        format,
+        label: originalName,
+        database: safeDb,
         sizeBytes,
       });
       return {
         ok: true,
         archive: {
           name: archiveName,
-          database,
+          label: originalName,
+          database: safeDb,
           memberPath,
-          format,
+          format: "custom",
           sizeBytes,
         },
         output: logLines.join("\n"),

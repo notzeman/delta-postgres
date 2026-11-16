@@ -11,6 +11,7 @@ export interface Project {
   source: string;
   enabled: boolean;
   ignored: boolean;
+  is_default: boolean;
   container_id: string | null;
   container_name: string | null;
   container_image: string | null;
@@ -31,6 +32,7 @@ export interface Project {
   last_error: string | null;
   next_run_at: string | null;
   repoBytes?: number;
+  repoPath?: string;
   archiveCount?: number;
   containerState?: string;
   containerImage?: string;
@@ -42,6 +44,8 @@ export interface Archive {
   project_id: number;
   job_id: number | null;
   name: string;
+  label: string | null;
+  imported: boolean;
   created_at: string | null;
   size_bytes: number | null;
   original_size: number | null;

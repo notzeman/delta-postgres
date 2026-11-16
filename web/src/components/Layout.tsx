@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   Activity,
-  ArrowDownUp,
   Database,
   LayoutDashboard,
   LogOut,
@@ -69,7 +68,6 @@ function useTitle(): string {
   if (location.pathname.startsWith("/projects")) return "Projects";
   if (location.pathname.startsWith("/servers")) return "Servers";
   if (location.pathname.startsWith("/activity")) return "Activity";
-  if (location.pathname.startsWith("/transfer")) return "Import / Export";
   if (location.pathname.startsWith("/settings")) return "Settings";
   return "Overview";
 }
@@ -259,7 +257,6 @@ export default function Layout({
                 )}
               </button>
             </Tooltip>
-            <TileLink to="/transfer" label="Import / Export" icon={ArrowDownUp} onNavigate={close} />
             <TileLink to="/settings" label="Settings" icon={SettingsIcon} onNavigate={close} />
           </div>
 

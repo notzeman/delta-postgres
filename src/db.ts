@@ -19,6 +19,7 @@ export interface Project {
   source: string;
   enabled: boolean;
   ignored: boolean;
+  is_default: boolean;
   container_id: string | null;
   container_name: string | null;
   container_image: string | null;
@@ -65,6 +66,8 @@ export interface Archive {
   project_id: number;
   job_id: number | null;
   name: string;
+  label: string | null;
+  imported: boolean;
   created_at: string | null;
   size_bytes: number | null;
   original_size: number | null;
@@ -131,6 +134,7 @@ export async function ensureSchema(): Promise<void> {
       source TEXT NOT NULL DEFAULT 'auto',
       enabled BOOLEAN NOT NULL DEFAULT true,
       ignored BOOLEAN NOT NULL DEFAULT false,
+      is_default BOOLEAN NOT NULL DEFAULT false,
       container_id TEXT,
       container_name TEXT,
       container_image TEXT,
@@ -175,6 +179,8 @@ export async function ensureSchema(): Promise<void> {
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       job_id INTEGER,
       name TEXT NOT NULL,
+      label TEXT,
+      imported BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ,
       size_bytes BIGINT,
       original_size BIGINT,
@@ -237,6 +243,12 @@ export async function ensureSchema(): Promise<void> {
     `ALTER TABLE projects ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT false`,
   );
   await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false`,
+  );
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_one_default ON projects(is_default) WHERE is_default = true`,
+  );
+  await pool.query(
     `ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_retries INTEGER NOT NULL DEFAULT 0`,
   );
   await pool.query(
@@ -247,6 +259,10 @@ export async function ensureSchema(): Promise<void> {
   );
   await pool.query(
     `ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+  );
+  await pool.query(`ALTER TABLE archives ADD COLUMN IF NOT EXISTS label TEXT`);
+  await pool.query(
+    `ALTER TABLE archives ADD COLUMN IF NOT EXISTS imported BOOLEAN NOT NULL DEFAULT false`,
   );
   await pool.query(
     `ALTER TABLE servers ADD COLUMN IF NOT EXISTS ssh_username TEXT`,

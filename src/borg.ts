@@ -305,52 +305,6 @@ export async function checkArchive(
   }
 }
 
-export function exportRepoStream(project: Project) {
-  const root = projectBackupDir(project);
-  return spawn("tar", ["-cf", "-", "-C", root, "."], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-export function exportAllStream() {
-  return spawn("tar", ["-cf", "-", "-C", config.backupRoot, "."], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-export async function importArchiveFromFile(
-  project: Project,
-  name: string,
-  filePath: string,
-  log: LogFn,
-): Promise<void> {
-  await ensureRepo(project, log);
-  log(`Importing archive ${name} from ${path.basename(filePath)}`);
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      "borg",
-      ["import-tar", archiveRef(project, name), "-"],
-      { env: { ...process.env, ...borgEnv(project) }, stdio: ["pipe", "pipe", "pipe"] },
-    );
-    let stderr = "";
-    child.stdout.on("data", (c: Buffer) => {
-      for (const line of c.toString("utf8").split(/\r?\n/)) if (line.trim()) log(line);
-    });
-    child.stderr.on("data", (c: Buffer) => {
-      stderr += c.toString("utf8");
-      for (const line of c.toString("utf8").split(/\r?\n/)) if (line.trim()) log(line);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr.trim() || `borg import-tar failed (${code})`));
-    });
-    const input = fs.createReadStream(filePath);
-    input.on("error", reject);
-    input.pipe(child.stdin);
-  });
-}
-
 export async function extractArchiveFile(
   project: Project,
   archive: string,

@@ -8,6 +8,7 @@ import {
   pool,
 } from "./db";
 import { discoverProjects, type DiscoveredProject } from "./discovery";
+import { ensureDefaultProject } from "./defaultProject";
 import { listServers } from "./servers";
 import { slugify } from "./utils";
 
@@ -125,6 +126,11 @@ export async function autoImportDiscoveredProjects(
 }
 
 export async function runAutoDiscovery(): Promise<number> {
+  try {
+    await ensureDefaultProject();
+  } catch (error) {
+    console.error("Default project initialization failed", error);
+  }
   const servers = await listServers();
   let added = 0;
   for (const server of servers) {
