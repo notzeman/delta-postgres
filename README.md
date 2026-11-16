@@ -114,6 +114,7 @@ curl -s http://127.0.0.1:8095/api/health | jq
 ### Projects and discovery
 
 - New Compose projects are picked up on startup, every five minutes, and whenever you choose **Rescan**.
+- Auto-discovery only considers containers with a Compose project label (`com.docker.compose.project`). Standalone `docker run` PostgreSQL containers are never auto-added; onboard them with **Add project** if needed.
 - Opening **Managed** doesn't trigger a scan. Discovery runs on **Rescan** or when you open **Detected** or **Ignored**.
 - Compose projects without PostgreSQL are listed under **Detected → Other Compose projects**.
 - **Add project** onboards a container the scan missed, with live detection of its databases and user.

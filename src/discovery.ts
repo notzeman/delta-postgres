@@ -55,13 +55,6 @@ export interface ComposeProjectSummary {
 const DISCOVERY_IGNORE_LABEL = "backup.ignore";
 const DISCOVERY_ENABLE_LABEL = "backup.enable";
 
-function deriveKey(name: string): string {
-  return name
-    .replace(/^\//, "")
-    .replace(/[-_](postgres|postgresql|pg|db|database|timescale|timescaledb)[-_]?\d*$/i, "")
-    .replace(/[-_]\d+$/, "");
-}
-
 function pgUserFor(container: ContainerInfo): string {
   return container.env.POSTGRES_USER || container.env.PGUSER || "postgres";
 }
@@ -96,15 +89,16 @@ export async function discoverProjects(
   }
 
   const postgresContainers = containers.filter(
-    (c) =>
+    (c): c is ContainerInfo & { composeProject: string } =>
       isPostgresImage(c.image) &&
+      Boolean(c.composeProject) &&
       c.labels[DISCOVERY_IGNORE_LABEL] !== "true" &&
       c.labels[DISCOVERY_ENABLE_LABEL] !== "false",
   );
 
   const groups = new Map<string, ContainerInfo[]>();
   for (const container of postgresContainers) {
-    const key = container.composeProject || deriveKey(container.name);
+    const key = container.composeProject;
     const list = groups.get(key) || [];
     list.push(container);
     groups.set(key, list);

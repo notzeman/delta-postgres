@@ -73,9 +73,6 @@ export async function resolveProjectContainer(
           name.includes(candidate.name.toLowerCase()),
       );
     }
-    if (candidates.length === 0 && !project.compose_project) {
-      candidates = postgres;
-    }
     const running = candidates.filter((candidate) => candidate.state === "running");
     const poolToUse = running.length > 0 ? running : candidates;
     container =
