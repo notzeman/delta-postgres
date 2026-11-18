@@ -31,6 +31,7 @@ RUN apt-get update \
     gnupg \
     tar \
     gzip \
+    lz4 \
     tzdata \
   && install -d /usr/share/postgresql-common/pgdg \
   && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \

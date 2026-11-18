@@ -32,9 +32,15 @@ import Picker from "../components/Picker";
 import UnsavedChangesGuard from "../components/UnsavedChangesGuard";
 import {
   COMPRESSION_MECHANISMS,
+  SNAPSHOT_COMPRESSION_METHODS,
   buildCompression,
+  buildSnapshotCompression,
   compressionSupportsLevel,
+  defaultSnapshotLevel,
   parseCompression,
+  parseSnapshotCompression,
+  snapshotLevelOptions,
+  snapshotSupportsLevel,
 } from "../compression";
 
 const FALLBACK_TIMEZONES = [
@@ -96,6 +102,7 @@ export default function Settings() {
     defaultMaxRetries: "0",
     defaultRetryDelayMinutes: "5",
     defaultCompression: "auto,zstd,3",
+    defaultSnapshotCompression: "none",
     notificationWebhook: "",
     autoAddProjects: true,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -129,6 +136,19 @@ export default function Settings() {
         },
       ];
 
+  const {
+    mechanism: snapshotMechanism,
+    level: snapshotLevel,
+  } = parseSnapshotCompression(form.defaultSnapshotCompression);
+  const snapshotLevelOptionsList = snapshotLevelOptions(snapshotMechanism);
+  if (
+    snapshotLevel &&
+    !snapshotLevelOptionsList.includes(snapshotLevel)
+  ) {
+    snapshotLevelOptionsList.push(snapshotLevel);
+    snapshotLevelOptionsList.sort((a, b) => Number(a) - Number(b));
+  }
+
   useEffect(() => {
     if (!settingsQuery.data?.settings) return;
     const settings = settingsQuery.data.settings;
@@ -141,6 +161,7 @@ export default function Settings() {
       defaultMaxRetries: String(settings.defaultMaxRetries ?? 0),
       defaultRetryDelayMinutes: delay,
       defaultCompression: settings.defaultCompression || "auto,zstd,3",
+      defaultSnapshotCompression: settings.defaultSnapshotCompression || "none",
       notificationWebhook: settings.notificationWebhook || "",
       autoAddProjects: settings.autoAddProjects !== false,
       timezone: settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -165,6 +186,7 @@ export default function Settings() {
           defaultMaxRetries: Number(form.defaultMaxRetries || 0),
           defaultRetryDelayMinutes: Number(form.defaultRetryDelayMinutes || 5),
           defaultCompression: form.defaultCompression,
+          defaultSnapshotCompression: form.defaultSnapshotCompression,
           notificationWebhook: form.notificationWebhook,
           autoAddProjects: form.autoAddProjects,
           timezone: form.timezone,
@@ -194,8 +216,8 @@ export default function Settings() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-slate-100">Settings</h2>
         <p className="mt-1 max-w-2xl text-sm text-slate-400">
-          Global schedule, retention, retry and compression defaults. Any project can override
-          schedule, retention, retries or compression independently.
+          Global schedule, retention, retry and compression defaults (including snapshot downloads).
+          Any project can override schedule, retention, retries or compression independently.
         </p>
       </div>
 
@@ -336,6 +358,59 @@ export default function Settings() {
                   disabled={!compressionSupportsLevel(compressionMechanism)}
                   placeholder="—"
                   ariaLabel="Default compression level"
+                />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Snapshot compression"
+                hint="Default for live snapshots and backup .dump downloads"
+              >
+                <Picker
+                  value={snapshotMechanism}
+                  onChange={(next) => {
+                    const nextLevel = snapshotLevelOptions(next).includes(snapshotLevel)
+                      ? snapshotLevel
+                      : defaultSnapshotLevel(next);
+                    setForm((f) => ({
+                      ...f,
+                      defaultSnapshotCompression: buildSnapshotCompression(next, nextLevel),
+                    }));
+                  }}
+                  options={SNAPSHOT_COMPRESSION_METHODS}
+                  ariaLabel="Default snapshot compression mechanism"
+                />
+              </Field>
+              <Field
+                label="Snapshot compression level"
+                hint={
+                  snapshotSupportsLevel(snapshotMechanism)
+                    ? "Higher means smaller downloads but more CPU"
+                    : "Not used by this method"
+                }
+              >
+                <Picker
+                  value={snapshotLevel}
+                  onChange={(next) =>
+                    setForm((f) => ({
+                      ...f,
+                      defaultSnapshotCompression: buildSnapshotCompression(
+                        snapshotMechanism,
+                        next,
+                      ),
+                    }))
+                  }
+                  options={snapshotLevelOptionsList.map((level) => ({
+                    value: level,
+                    label: `Level ${level}`,
+                    description:
+                      level === defaultSnapshotLevel(snapshotMechanism)
+                        ? "Default"
+                        : undefined,
+                  }))}
+                  disabled={!snapshotSupportsLevel(snapshotMechanism)}
+                  placeholder="—"
+                  ariaLabel="Default snapshot compression level"
                 />
               </Field>
             </div>

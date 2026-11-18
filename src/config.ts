@@ -59,6 +59,7 @@ export const config = {
   defaultMaxRetries: Math.max(0, Number(process.env.RETRY_ATTEMPTS || 0)),
   defaultRetryDelayMinutes: Math.max(1, Number(process.env.RETRY_DELAY_MINUTES || 5)),
   defaultCompression: process.env.COMPRESSION || "auto,zstd,3",
+  defaultSnapshotCompression: process.env.SNAPSHOT_COMPRESSION || "none",
   concurrency: Math.max(1, Number(process.env.CONCURRENCY || 1)),
   stagingRoot: path.join(dataDir, "staging"),
   logsDir: path.join(dataDir, "logs"),

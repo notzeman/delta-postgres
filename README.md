@@ -173,9 +173,9 @@ The dump is extracted from Borg and restored with `pg_restore` (or `psql` for pl
 
 All transfers are per project and use PostgreSQL custom-format `.dump` files.
 
-- **Take current snapshot** (project header) runs a live `pg_dump -Fc` of the project's default database and downloads it. Nothing is stored.
+- **Take current snapshot** (project header) runs a live `pg_dump -Fc` of the project's default database and downloads it. Nothing is stored. Compression comes from the project's **Snapshot compression** setting (global default: `none`), with `none`, `gzip`, `lz4` and `zstd` available. The same setting compresses backup downloads (`.dump.gz` / `.dump.zst` / `.dump.lz4`).
 - **Import dump file** (`+` in the **Backups** tab) accepts a single `.dump` file, validates the `PGDMP` header, and adds it to the project's **Backups** list. The exact filename is kept as the backup label. Nothing is restored automatically; restore it from the **Restore** tab like any other backup.
-- **Download** on a backup row extracts the selected `databases/<name>.dump` and downloads it. If an archive contains multiple database dumps, a picker lists each `.dump`.
+- **Download** on a backup row extracts the selected `databases/<name>.dump` and downloads it. If an archive contains multiple database dumps, a picker lists each `.dump`. Downloads use the project's **Snapshot compression** setting (global default `none`), so `gzip`, `lz4` and `zstd` produce a `.dump.gz`, `.dump.lz4` or `.dump.zst` file — decompress it before `pg_restore`.
 - Imported rows show an **imported** pill. Use the pen icon on a backup row to rename its label inline; the internal Borg archive name stays stable.
 
 A Borg archive is one backup run: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per selected database. Projects that back up a single database therefore have exactly one `.dump` per archive. If the project's **Databases** setting lists multiple databases, the archive contains one `.dump` per database.
@@ -184,7 +184,7 @@ Imported archives keep their original timestamps and are subject to retention. I
 
 ## Configuration
 
-Schedules, timezone, concurrency, retention, retry attempts/delay, compression, the notification webhook and auto-add are set on the dashboard's **Settings** page. The `.env` file holds secrets and ports only.
+Schedules, timezone, concurrency, retention, retry attempts/delay, compression (Borg archives and snapshot downloads), the notification webhook and auto-add are set on the dashboard's **Settings** page. The `.env` file holds secrets and ports only.
 
 Global retry and compression values are inherited by all projects by default. A project can override them independently with the **Use global retry settings** and **Use global compression settings** checkboxes in its **Settings** tab.
 

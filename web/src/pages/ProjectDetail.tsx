@@ -31,9 +31,16 @@ import type {
 } from "../types";
 import {
   COMPRESSION_MECHANISMS,
+  SNAPSHOT_COMPRESSION_METHODS,
   buildCompression,
+  buildSnapshotCompression,
   compressionSupportsLevel,
+  defaultSnapshotLevel,
   parseCompression,
+  parseSnapshotCompression,
+  snapshotCompressionLabel,
+  snapshotLevelOptions,
+  snapshotSupportsLevel,
 } from "../compression";
 import {
   BackButton,
@@ -110,12 +117,16 @@ export default function ProjectDetail() {
   const globalCompressionLabel = `${globalCompressionParsed.mechanism}${
     globalCompressionParsed.level ? ` level ${globalCompressionParsed.level}` : ""
   }`;
+  const globalSnapshotCompression = globalSettings?.defaultSnapshotCompression ?? "none";
+  const globalSnapshotCompressionLabel = snapshotCompressionLabel(globalSnapshotCompression);
 
   const project = projectQuery.data?.project;
   const server = projectQuery.data?.server;
   const archives = projectQuery.data?.archives || [];
   const jobs = projectQuery.data?.jobs || [];
   const container = projectQuery.data?.container;
+  const effectiveSnapshotCompression =
+    project?.snapshot_compression ?? globalSnapshotCompression;
 
   const [form, setForm] = useState({
     name: "",
@@ -129,8 +140,10 @@ export default function ProjectDetail() {
     maxRetries: "",
     retryDelayMinutes: "",
     compression: "",
+    snapshotCompression: "",
     useGlobalRetry: true,
     useGlobalCompression: true,
+    useGlobalSnapshotCompression: true,
     notes: "",
   });
   const [retryMode, setRetryMode] = useState("5");
@@ -160,11 +173,22 @@ export default function ProjectDetail() {
         },
       ];
 
+  const {
+    mechanism: snapshotMechanism,
+    level: snapshotLevel,
+  } = parseSnapshotCompression(form.snapshotCompression);
+  const snapshotLevelOptionsList = snapshotLevelOptions(snapshotMechanism);
+  if (snapshotLevel && !snapshotLevelOptionsList.includes(snapshotLevel)) {
+    snapshotLevelOptionsList.push(snapshotLevel);
+    snapshotLevelOptionsList.sort((a, b) => Number(a) - Number(b));
+  }
+
   useEffect(() => {
     if (!project) return;
     const usesGlobalRetry =
       project.max_retries === null && project.retry_delay_minutes === null;
     const usesGlobalCompression = project.compression === null;
+    const usesGlobalSnapshotCompression = project.snapshot_compression === null;
     const next = {
       name: project.name,
       enabled: project.enabled,
@@ -177,15 +201,17 @@ export default function ProjectDetail() {
       maxRetries: String(project.max_retries ?? globalMaxRetries),
       retryDelayMinutes: String(project.retry_delay_minutes ?? globalRetryDelay),
       compression: project.compression ?? globalCompression,
+      snapshotCompression: project.snapshot_compression ?? globalSnapshotCompression,
       useGlobalRetry: usesGlobalRetry,
       useGlobalCompression: usesGlobalCompression,
+      useGlobalSnapshotCompression: usesGlobalSnapshotCompression,
       notes: project.notes || "",
     };
     setForm(next);
     setSavedSettings(next);
     const delay = String(project.retry_delay_minutes ?? globalRetryDelay);
     setRetryMode(["5", "15", "30"].includes(delay) ? delay : "custom");
-  }, [project?.id, globalMaxRetries, globalRetryDelay, globalCompression]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project?.id, globalMaxRetries, globalRetryDelay, globalCompression, globalSnapshotCompression]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const settingsDirty =
     savedSettings !== null && JSON.stringify(form) !== JSON.stringify(savedSettings);
@@ -264,6 +290,9 @@ export default function ProjectDetail() {
               ? 5
               : Number(form.retryDelayMinutes),
           compression: form.useGlobalCompression ? null : form.compression,
+          snapshotCompression: form.useGlobalSnapshotCompression
+            ? null
+            : form.snapshotCompression,
           notes: form.notes || null,
         }),
       }),
@@ -331,6 +360,21 @@ export default function ProjectDetail() {
     selected: string;
   } | null>(null);
   const [downloadLoading, setDownloadLoading] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<{
+    archive: string;
+    database: string;
+    filename: string;
+    compression: string;
+    running: boolean;
+    done: boolean;
+    error: string;
+    label: string;
+    percent: number | null;
+    received: number;
+    total: number | null;
+    originalSize: number | null;
+  } | null>(null);
+  const downloadAbortRef = useRef<AbortController | null>(null);
   const [archiveToDelete, setArchiveToDelete] = useState<string | null>(null);
   const [confirmIgnore, setConfirmIgnore] = useState(false);
 
@@ -566,9 +610,7 @@ export default function ProjectDetail() {
         return;
       }
       if (dumps.length === 1) {
-        window.location.href = downloadUrl(
-          `/projects/${projectId}/archives/${encodeURIComponent(archive.name)}/dump?database=${encodeURIComponent(dumps[0].name)}`,
-        );
+        void startArchiveDownload(archive.name, dumps[0].name);
         return;
       }
       setDownloadState({
@@ -580,6 +622,140 @@ export default function ProjectDetail() {
       snackbar.error(err instanceof Error ? err.message : "Download failed");
     } finally {
       setDownloadLoading(null);
+    }
+  };
+
+  const startArchiveDownload = async (archive: string, database: string) => {
+    setDownloadState(null);
+    downloadAbortRef.current?.abort();
+    const controller = new AbortController();
+    downloadAbortRef.current = controller;
+    setDownloadProgress({
+      archive,
+      database,
+      filename: "",
+      compression: effectiveSnapshotCompression,
+      running: true,
+      done: false,
+      error: "",
+      label:
+        effectiveSnapshotCompression === "none"
+          ? "Extracting dump from Borg…"
+          : `Extracting from Borg and compressing (${snapshotCompressionLabel(effectiveSnapshotCompression)})…`,
+      percent: null,
+      received: 0,
+      total: null,
+      originalSize: null,
+    });
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/archives/${encodeURIComponent(archive)}/dump?database=${encodeURIComponent(database)}`,
+        { credentials: "include", signal: controller.signal },
+      );
+      if (response.status === 401) {
+        window.dispatchEvent(new Event("dp:unauthorized"));
+      }
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as any).error || `Download failed (${response.status})`,
+        );
+      }
+      const total = Number(response.headers.get("content-length")) || null;
+      const originalSize =
+        Number(response.headers.get("x-dump-original-size")) || null;
+      const compression =
+        response.headers.get("x-dump-compression") || effectiveSnapshotCompression;
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename =
+        /filename="([^"]+)"/.exec(disposition)?.[1] ||
+        `${archive}-${database}.dump`;
+      setDownloadProgress((current) =>
+        current
+          ? {
+              ...current,
+              total,
+              originalSize,
+              compression,
+              filename,
+              label:
+                compression === "none"
+                  ? "Downloading dump…"
+                  : "Downloading compressed dump…",
+              percent: total ? 0 : null,
+            }
+          : current,
+      );
+      if (!response.body) throw new Error("Download stream unavailable");
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      let lastUpdate = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        received += value.length;
+        const now = Date.now();
+        if (now - lastUpdate < 200 && (!total || received < total)) continue;
+        lastUpdate = now;
+        setDownloadProgress((current) =>
+          current
+            ? {
+                ...current,
+                received,
+                percent: total
+                  ? Math.min(99, Math.round((received / total) * 100))
+                  : null,
+              }
+            : current,
+        );
+      }
+      const blob = new Blob(chunks as BlobPart[], {
+        type: "application/octet-stream",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setDownloadProgress((current) =>
+        current
+          ? {
+              ...current,
+              running: false,
+              done: true,
+              percent: 100,
+              received,
+              label: "Download ready",
+            }
+          : current,
+      );
+    } catch (err) {
+      if (controller.signal.aborted) {
+        setDownloadProgress(null);
+        return;
+      }
+      const message = err instanceof Error ? err.message : "Download failed";
+      setDownloadProgress((current) =>
+        current
+          ? {
+              ...current,
+              running: false,
+              done: false,
+              error: message,
+              percent: 100,
+              label: "Download failed",
+            }
+          : current,
+      );
+      snackbar.error(message);
+    } finally {
+      if (downloadAbortRef.current === controller) downloadAbortRef.current = null;
     }
   };
 
@@ -683,7 +859,7 @@ export default function ProjectDetail() {
             aria-disabled={container?.state !== "running"}
             title={
               container?.state === "running"
-                ? `Download a live .dump of ${primaryDb || "the default database"}`
+                ? `Download a live .dump of ${primaryDb || "the default database"} (${snapshotCompressionLabel(effectiveSnapshotCompression)})`
                 : "Container is not running"
             }
           >
@@ -1459,6 +1635,75 @@ export default function ProjectDetail() {
                   />
                 </Field>
               </div>
+              <Checkbox
+                checked={form.useGlobalSnapshotCompression}
+                onChange={(checked) =>
+                  setForm((f) => ({
+                    ...f,
+                    useGlobalSnapshotCompression: checked,
+                    ...(checked ? { snapshotCompression: globalSnapshotCompression } : {}),
+                  }))
+                }
+                label="Use global snapshot compression"
+                description={`Global: ${globalSnapshotCompressionLabel}`}
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Snapshot compression"
+                  hint="Used by live snapshots and backup .dump downloads"
+                >
+                  <Picker
+                    value={snapshotMechanism}
+                    disabled={form.useGlobalSnapshotCompression}
+                    onChange={(next) => {
+                      const nextLevel = snapshotLevelOptions(next).includes(snapshotLevel)
+                        ? snapshotLevel
+                        : defaultSnapshotLevel(next);
+                      setForm((f) => ({
+                        ...f,
+                        snapshotCompression: buildSnapshotCompression(next, nextLevel),
+                      }));
+                    }}
+                    options={SNAPSHOT_COMPRESSION_METHODS}
+                    ariaLabel="Snapshot compression mechanism"
+                  />
+                </Field>
+                <Field
+                  label="Snapshot compression level"
+                  hint={
+                    snapshotSupportsLevel(snapshotMechanism)
+                      ? "Higher means smaller downloads but more CPU"
+                      : "Not used by this method"
+                  }
+                >
+                  <Picker
+                    value={snapshotLevel}
+                    onChange={(next) =>
+                      setForm((f) => ({
+                        ...f,
+                        snapshotCompression: buildSnapshotCompression(
+                          snapshotMechanism,
+                          next,
+                        ),
+                      }))
+                    }
+                    options={snapshotLevelOptionsList.map((level) => ({
+                      value: level,
+                      label: `Level ${level}`,
+                      description:
+                        level === defaultSnapshotLevel(snapshotMechanism)
+                          ? "Default"
+                          : undefined,
+                    }))}
+                    disabled={
+                      form.useGlobalSnapshotCompression ||
+                      !snapshotSupportsLevel(snapshotMechanism)
+                    }
+                    placeholder="—"
+                    ariaLabel="Snapshot compression level"
+                  />
+                </Field>
+              </div>
               <Field label="Notes">
                 <Textarea
                   rows={2}
@@ -1643,15 +1888,142 @@ export default function ProjectDetail() {
               />
             </Field>
             <div className="flex justify-end">
-              <a
-                href={downloadUrl(
-                  `/projects/${projectId}/archives/${encodeURIComponent(downloadState.archive)}/dump?database=${encodeURIComponent(downloadState.selected)}`,
-                )}
-                className="btn-primary"
-                onClick={() => setDownloadState(null)}
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const target = downloadState;
+                  if (!target) return;
+                  void startArchiveDownload(target.archive, target.selected);
+                }}
               >
                 <Download className="h-4 w-4" /> Download .dump
-              </a>
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(downloadProgress)}
+        onClose={() => {
+          if (downloadProgress?.running) downloadAbortRef.current?.abort();
+          setDownloadProgress(null);
+        }}
+        title="Download backup dump"
+        subtitle={
+          downloadProgress
+            ? `${downloadProgress.archive} · ${downloadProgress.database}`
+            : undefined
+        }
+      >
+        {downloadProgress ? (
+          <div className="space-y-4">
+            <div className="space-y-2 rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-500">Compression</span>
+                <span className="truncate font-mono text-slate-200">
+                  {snapshotCompressionLabel(downloadProgress.compression)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-500">File</span>
+                <span className="truncate font-mono text-slate-200">
+                  {downloadProgress.filename || "…"}
+                </span>
+              </div>
+              {downloadProgress.originalSize !== null ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-500">Size</span>
+                  <span className="truncate font-mono text-slate-200">
+                    {formatBytes(downloadProgress.originalSize)}
+                    {downloadProgress.total
+                      ? ` → ${formatBytes(downloadProgress.total)}`
+                      : ""}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+            <div>
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span
+                  className={cn(
+                    "flex items-center gap-2 font-medium",
+                    downloadProgress.error
+                      ? "text-rose-300"
+                      : downloadProgress.done
+                        ? "text-emerald-300"
+                        : "text-slate-300",
+                  )}
+                >
+                  {downloadProgress.done ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : downloadProgress.running ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  {downloadProgress.label}
+                </span>
+                <span className="font-mono text-[11px] text-slate-500">
+                  {downloadProgress.percent === null
+                    ? "…"
+                    : `${downloadProgress.percent}%`}
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/5">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all duration-500",
+                    downloadProgress.error
+                      ? "bg-rose-400"
+                      : downloadProgress.done
+                        ? "bg-emerald-400"
+                        : "bg-accent-500",
+                    downloadProgress.running &&
+                      downloadProgress.percent === null &&
+                      "animate-pulse",
+                  )}
+                  style={{
+                    width:
+                      downloadProgress.percent === null
+                        ? "100%"
+                        : `${Math.max(2, downloadProgress.percent)}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                {downloadProgress.error
+                  ? downloadProgress.error
+                  : downloadProgress.done
+                    ? `${formatBytes(downloadProgress.received)} saved. Check your browser downloads.`
+                    : downloadProgress.total
+                      ? `${formatBytes(downloadProgress.received)} of ${formatBytes(downloadProgress.total)}`
+                      : `${formatBytes(downloadProgress.received)} received`}
+              </p>
+            </div>
+            {downloadProgress.error ? (
+              <ErrorBox message={downloadProgress.error} />
+            ) : null}
+            {downloadProgress.compression !== "none" ? (
+              <p className="text-[11px] text-slate-500">
+                The file is compressed. Decompress it before running{" "}
+                <span className="font-mono">pg_restore</span>.
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              {downloadProgress.running ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    downloadAbortRef.current?.abort();
+                    setDownloadProgress(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={() => setDownloadProgress(null)}>
+                  Close
+                </Button>
+              )}
             </div>
           </div>
         ) : null}

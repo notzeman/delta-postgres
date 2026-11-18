@@ -26,6 +26,7 @@ export interface Project {
   max_retries: number | null;
   retry_delay_minutes: number | null;
   compression: string | null;
+  snapshot_compression: string | null;
   notes: string | null;
   last_backup_at: string | null;
   last_status: string | null;
@@ -210,6 +211,7 @@ export interface Settings {
   defaultMaxRetries: number;
   defaultRetryDelayMinutes: number;
   defaultCompression: string;
+  defaultSnapshotCompression: string;
   notificationWebhook: string;
   autoAddProjects: boolean;
   timezone: string;

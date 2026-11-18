@@ -34,6 +34,7 @@ export interface Project {
   max_retries: number | null;
   retry_delay_minutes: number | null;
   compression: string | null;
+  snapshot_compression: string | null;
   notes: string | null;
   last_backup_at: string | null;
   last_status: string | null;
@@ -149,6 +150,7 @@ export async function ensureSchema(): Promise<void> {
       max_retries INTEGER,
       retry_delay_minutes INTEGER,
       compression TEXT,
+      snapshot_compression TEXT,
       notes TEXT,
       last_backup_at TIMESTAMPTZ,
       last_status TEXT,
@@ -256,6 +258,9 @@ export async function ensureSchema(): Promise<void> {
   );
   await pool.query(
     `ALTER TABLE projects ADD COLUMN IF NOT EXISTS compression TEXT`,
+  );
+  await pool.query(
+    `ALTER TABLE projects ADD COLUMN IF NOT EXISTS snapshot_compression TEXT`,
   );
   await pool.query(`
     DO $$

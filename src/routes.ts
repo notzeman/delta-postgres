@@ -51,6 +51,13 @@ import {
 } from "./servers";
 import { encryptSecret } from "./secrets";
 import {
+  compressSnapshotFile,
+  normalizeSnapshotCompression,
+  resolveSnapshotCompression,
+  snapshotCompressionArgs,
+  snapshotCompressionExtension,
+} from "./compression";
+import {
   borgVersion,
   repoSizeBytes,
   invalidateRepoSize,
@@ -849,6 +856,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       keepWeekly: z.number().int().min(0).nullable().optional(),
       keepMonthly: z.number().int().min(0).nullable().optional(),
       compression: z.string().optional(),
+      snapshotCompression: z.string().nullable().optional(),
       notes: z.string().nullable().optional(),
       force: z.boolean().optional(),
       source: z.string().optional(),
@@ -858,6 +866,11 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const body = parsed.data;
     const ref = body.containerId || body.containerName;
     if (!ref) return sendError(reply, 400, "A container is required");
+    let snapshotCompression: string | null = null;
+    if (body.snapshotCompression !== undefined && body.snapshotCompression !== null) {
+      snapshotCompression = normalizeSnapshotCompression(body.snapshotCompression);
+      if (!snapshotCompression) return sendError(reply, 400, "Invalid snapshot compression");
+    }
     const server = body.serverId
       ? await getServer(body.serverId)
       : await getLocalServer();
@@ -892,8 +905,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       `INSERT INTO projects(name, slug, source, enabled, server_id, container_id,
         container_name, container_image, compose_project, pg_user, pg_default_db,
         databases, schedule_cron, keep_daily, keep_weekly, keep_monthly, compression,
-        notes, next_run_at)
-       VALUES($1,$2,$3,true,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        snapshot_compression, notes, next_run_at)
+       VALUES($1,$2,$3,true,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [
         body.name,
@@ -912,6 +925,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         body.keepWeekly ?? null,
         body.keepMonthly ?? null,
         body.compression ?? null,
+        snapshotCompression,
         body.notes ?? null,
         computeNextRun(cron, new Date(), timezone),
       ],
@@ -996,11 +1010,17 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       maxRetries: z.number().int().min(0).max(10).nullable().optional(),
       retryDelayMinutes: z.number().int().min(1).max(1440).nullable().optional(),
       compression: z.string().nullable().optional(),
+      snapshotCompression: z.string().nullable().optional(),
       notes: z.string().nullable().optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
     const body = parsed.data;
+    let snapshotCompression: string | null | undefined = body.snapshotCompression;
+    if (snapshotCompression !== undefined && snapshotCompression !== null) {
+      snapshotCompression = normalizeSnapshotCompression(snapshotCompression);
+      if (!snapshotCompression) return sendError(reply, 400, "Invalid snapshot compression");
+    }
     const settings = await getSettings();
     const timezone = String(settings.timezone || config.timezone);
     if (body.scheduleCron && computeNextRun(body.scheduleCron, new Date(), timezone) === null) {
@@ -1025,10 +1045,10 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       `UPDATE projects SET
         name = $1, enabled = $2, pg_user = $3, pg_default_db = $4,
         databases = $5, schedule_cron = $6, keep_daily = $7, keep_weekly = $8,
-        keep_monthly = $9, compression = $10, notes = $11, next_run_at = $12,
-        ignored = $13, max_retries = $14, retry_delay_minutes = $15,
+        keep_monthly = $9, compression = $10, snapshot_compression = $11, notes = $12,
+        next_run_at = $13, ignored = $14, max_retries = $15, retry_delay_minutes = $16,
         updated_at = now()
-       WHERE id = $16 RETURNING *`,
+       WHERE id = $17 RETURNING *`,
       [
         body.name ?? project.name,
         body.enabled ?? project.enabled,
@@ -1046,6 +1066,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         body.keepWeekly === undefined ? project.keep_weekly : body.keepWeekly,
         body.keepMonthly === undefined ? project.keep_monthly : body.keepMonthly,
         body.compression === undefined ? project.compression : body.compression,
+        snapshotCompression === undefined ? project.snapshot_compression : snapshotCompression,
         body.notes === undefined ? project.notes : body.notes,
         nextRun,
         body.ignored === undefined ? project.ignored : body.ignored,
@@ -1344,6 +1365,16 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       config.stagingRoot,
       `archive-dump-${Date.now()}-${Math.random().toString(36).slice(2)}.dump`,
     );
+    const settings = await getSettings();
+    const compression = resolveSnapshotCompression(
+      project.snapshot_compression,
+      typeof settings.defaultSnapshotCompression === "string"
+        ? settings.defaultSnapshotCompression
+        : null,
+      config.defaultSnapshotCompression,
+    );
+    const extension = snapshotCompressionExtension(compression);
+    let compressedFile: string | null = null;
     try {
       await extractArchiveFile(project, name, match, tempFile, () => {});
       const meta = await pool.query<{ label: string | null }>(
@@ -1351,20 +1382,35 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         [project.id, name],
       );
       const display = (meta.rows[0]?.label || name).replace(/\.dump$/i, "");
-      const filename = `${project.slug}-${display}-${database}.dump`.replace(
+      let sendFile = tempFile;
+      if (extension) {
+        compressedFile = `${tempFile}${extension}`;
+        await compressSnapshotFile(tempFile, compressedFile, compression);
+        sendFile = compressedFile;
+      }
+      const originalSize = fs.statSync(tempFile).size;
+      const size = fs.statSync(sendFile).size;
+      const filename = `${project.slug}-${display}-${database}.dump${extension}`.replace(
         /[^a-zA-Z0-9_.-]/g,
         "_",
       );
       reply.header("Content-Type", "application/octet-stream");
       reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+      reply.header("Content-Length", String(size));
       reply.header("Cache-Control", "no-store");
-      const stream = fs.createReadStream(tempFile);
-      const cleanup = () => fs.rm(tempFile, { force: true }, () => {});
+      reply.header("X-Dump-Compression", compression);
+      reply.header("X-Dump-Original-Size", String(originalSize));
+      const stream = fs.createReadStream(sendFile);
+      const cleanup = () => {
+        fs.rm(tempFile, { force: true }, () => {});
+        if (compressedFile) fs.rm(compressedFile, { force: true }, () => {});
+      };
       stream.on("close", cleanup);
       stream.on("error", cleanup);
       return reply.send(stream);
     } catch (error) {
-      fs.rm(tempFile, { force: true }, () => {});
+      fs.rmSync(tempFile, { force: true });
+      if (compressedFile) fs.rmSync(compressedFile, { force: true });
       return sendError(
         reply,
         500,
@@ -1555,6 +1601,15 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, `Database "${database || "?"}" was not found in ${container.name}`);
     }
 
+    const settings = await getSettings();
+    const snapshotCompression = resolveSnapshotCompression(
+      project.snapshot_compression,
+      typeof settings.defaultSnapshotCompression === "string"
+        ? settings.defaultSnapshotCompression
+        : null,
+      config.defaultSnapshotCompression,
+    );
+
     if (!claimServerForDump(server.id)) {
       return sendError(
         reply,
@@ -1572,8 +1627,18 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     try {
       const handle = await execStream(
         container.id,
-        // Same flags as scheduled backups: read-only, never waits behind DDL.
-        ["pg_dump", "-U", pgUser, "-Fc", "-Z", "0", "--lock-wait-timeout=30s", "-d", database],
+        // Read-only, never waits behind DDL. Compression is the project's
+        // snapshot setting (gzip/none use -Z so older pg_dump versions work).
+        [
+          "pg_dump",
+          "-U",
+          pgUser,
+          "-Fc",
+          ...snapshotCompressionArgs(snapshotCompression),
+          "--lock-wait-timeout=30s",
+          "-d",
+          database,
+        ],
         { env: PG_READ_ONLY_ENV },
         server,
       );
@@ -1771,6 +1836,9 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
           stored.defaultRetryDelayMinutes ?? config.defaultRetryDelayMinutes,
         ),
         defaultCompression: String(stored.defaultCompression || config.defaultCompression),
+        defaultSnapshotCompression: String(
+          stored.defaultSnapshotCompression || config.defaultSnapshotCompression,
+        ),
         notificationWebhook: stored.notificationWebhook ?? "",
         autoAddProjects: stored.autoAddProjects !== false,
         timezone: String(stored.timezone || config.timezone),
@@ -1792,6 +1860,7 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       defaultMaxRetries: z.number().int().min(0).max(10).optional(),
       defaultRetryDelayMinutes: z.number().int().min(1).max(1440).optional(),
       defaultCompression: z.string().min(1).optional(),
+      defaultSnapshotCompression: z.string().min(1).optional(),
       notificationWebhook: z.string().optional(),
       autoAddProjects: z.boolean().optional(),
       timezone: z.string().optional(),
@@ -1801,6 +1870,11 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return sendError(reply, 400, parsed.error.issues[0]?.message || "Invalid body");
     if (parsed.data.timezone && !isValidTimezone(parsed.data.timezone)) {
       return sendError(reply, 400, "Invalid timezone");
+    }
+    if (parsed.data.defaultSnapshotCompression !== undefined) {
+      const normalized = normalizeSnapshotCompression(parsed.data.defaultSnapshotCompression);
+      if (!normalized) return sendError(reply, 400, "Invalid snapshot compression");
+      parsed.data.defaultSnapshotCompression = normalized;
     }
     const stored = await getSettings();
     const timezone = String(parsed.data.timezone || stored.timezone || config.timezone);
