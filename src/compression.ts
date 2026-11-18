@@ -1,5 +1,5 @@
 /**
- * Compression for live "Take current snapshot" exports and archive downloads.
+ * Compression for live "Take current snapshot" exports and backup dumps.
  *
  * Values are stored in pg_dump's own spec syntax so they can be handed to the
  * source container unchanged after validation:
@@ -9,11 +9,6 @@
  * A project's `snapshot_compression` may be NULL, which means "inherit the
  * global default" (settings.defaultSnapshotCompression).
  */
-
-import fs from "fs";
-import { spawn } from "child_process";
-import { constants as zlibConstants, createGzip, createZstdCompress } from "zlib";
-import { pipeline } from "stream/promises";
 
 export const SNAPSHOT_METHODS = ["none", "gzip", "lz4", "zstd"] as const;
 export type SnapshotMethod = (typeof SNAPSHOT_METHODS)[number];
@@ -98,72 +93,4 @@ export function resolveSnapshotCompression(
     normalizeSnapshotCompression(configValue) ||
     "none"
   );
-}
-
-/** File extension for a download, matching the compression method. */
-export function snapshotCompressionExtension(spec: string | null | undefined): string {
-  const method = parseSnapshotCompression(spec)?.method ?? "none";
-  if (method === "none") return "";
-  if (method === "gzip") return ".gz";
-  if (method === "zstd") return ".zst";
-  return ".lz4";
-}
-
-function compressWithLz4(input: string, output: string, level: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("lz4", ["-c", `-${level}`, "-q"], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    const closed = new Promise<number>((done) => child.on("close", (code) => done(code ?? 1)));
-    child.on("error", (error) => {
-      child.kill();
-      reject(error);
-    });
-    Promise.all([
-      pipeline(fs.createReadStream(input), child.stdin),
-      pipeline(child.stdout, fs.createWriteStream(output)),
-    ])
-      .then(async () => {
-        const code = await closed;
-        if (code !== 0) throw new Error(stderr.trim() || `lz4 failed (${code})`);
-        resolve();
-      })
-      .catch((error) => {
-        child.kill();
-        reject(error);
-      });
-  });
-}
-
-/**
- * Compress a dump file for download. Returns the canonical spec that was
- * applied. `none` never reaches this function (callers stream the file as-is).
- */
-export async function compressSnapshotFile(
-  input: string,
-  output: string,
-  spec: string | null | undefined,
-): Promise<string> {
-  const normalized = normalizeSnapshotCompression(spec);
-  const parsed = parseSnapshotCompression(normalized);
-  if (!normalized || !parsed || parsed.method === "none") {
-    throw new Error("A compression method other than none is required");
-  }
-  const level = parsed.level ?? DEFAULT_LEVELS[parsed.method];
-  if (parsed.method === "lz4") {
-    await compressWithLz4(input, output, level);
-  } else {
-    const compressor =
-      parsed.method === "gzip"
-        ? createGzip({ level })
-        : createZstdCompress({
-            params: { [zlibConstants.ZSTD_c_compressionLevel]: level },
-          });
-    await pipeline(fs.createReadStream(input), compressor, fs.createWriteStream(output));
-  }
-  return normalized;
 }

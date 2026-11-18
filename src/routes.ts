@@ -51,11 +51,9 @@ import {
 } from "./servers";
 import { encryptSecret } from "./secrets";
 import {
-  compressSnapshotFile,
   normalizeSnapshotCompression,
   resolveSnapshotCompression,
   snapshotCompressionArgs,
-  snapshotCompressionExtension,
 } from "./compression";
 import {
   borgVersion,
@@ -1365,16 +1363,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       config.stagingRoot,
       `archive-dump-${Date.now()}-${Math.random().toString(36).slice(2)}.dump`,
     );
-    const settings = await getSettings();
-    const compression = resolveSnapshotCompression(
-      project.snapshot_compression,
-      typeof settings.defaultSnapshotCompression === "string"
-        ? settings.defaultSnapshotCompression
-        : null,
-      config.defaultSnapshotCompression,
-    );
-    const extension = snapshotCompressionExtension(compression);
-    let compressedFile: string | null = null;
     try {
       await extractArchiveFile(project, name, match, tempFile, () => {});
       const meta = await pool.query<{ label: string | null }>(
@@ -1382,15 +1370,8 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         [project.id, name],
       );
       const display = (meta.rows[0]?.label || name).replace(/\.dump$/i, "");
-      let sendFile = tempFile;
-      if (extension) {
-        compressedFile = `${tempFile}${extension}`;
-        await compressSnapshotFile(tempFile, compressedFile, compression);
-        sendFile = compressedFile;
-      }
-      const originalSize = fs.statSync(tempFile).size;
-      const size = fs.statSync(sendFile).size;
-      const filename = `${project.slug}-${display}-${database}.dump${extension}`.replace(
+      const size = fs.statSync(tempFile).size;
+      const filename = `${project.slug}-${display}-${database}.dump`.replace(
         /[^a-zA-Z0-9_.-]/g,
         "_",
       );
@@ -1398,19 +1379,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       reply.header("Content-Disposition", `attachment; filename="${filename}"`);
       reply.header("Content-Length", String(size));
       reply.header("Cache-Control", "no-store");
-      reply.header("X-Dump-Compression", compression);
-      reply.header("X-Dump-Original-Size", String(originalSize));
-      const stream = fs.createReadStream(sendFile);
-      const cleanup = () => {
-        fs.rm(tempFile, { force: true }, () => {});
-        if (compressedFile) fs.rm(compressedFile, { force: true }, () => {});
-      };
+      const stream = fs.createReadStream(tempFile);
+      const cleanup = () => fs.rm(tempFile, { force: true }, () => {});
       stream.on("close", cleanup);
       stream.on("error", cleanup);
       return reply.send(stream);
     } catch (error) {
       fs.rmSync(tempFile, { force: true });
-      if (compressedFile) fs.rmSync(compressedFile, { force: true });
       return sendError(
         reply,
         500,

@@ -364,7 +364,6 @@ export default function ProjectDetail() {
     archive: string;
     database: string;
     filename: string;
-    compression: string;
     running: boolean;
     done: boolean;
     error: string;
@@ -372,7 +371,6 @@ export default function ProjectDetail() {
     percent: number | null;
     received: number;
     total: number | null;
-    originalSize: number | null;
   } | null>(null);
   const downloadAbortRef = useRef<AbortController | null>(null);
   const [archiveToDelete, setArchiveToDelete] = useState<string | null>(null);
@@ -634,18 +632,13 @@ export default function ProjectDetail() {
       archive,
       database,
       filename: "",
-      compression: effectiveSnapshotCompression,
       running: true,
       done: false,
       error: "",
-      label:
-        effectiveSnapshotCompression === "none"
-          ? "Extracting dump from Borg…"
-          : `Extracting from Borg and compressing (${snapshotCompressionLabel(effectiveSnapshotCompression)})…`,
+      label: "Extracting dump from Borg…",
       percent: null,
       received: 0,
       total: null,
-      originalSize: null,
     });
     try {
       const response = await fetch(
@@ -662,10 +655,6 @@ export default function ProjectDetail() {
         );
       }
       const total = Number(response.headers.get("content-length")) || null;
-      const originalSize =
-        Number(response.headers.get("x-dump-original-size")) || null;
-      const compression =
-        response.headers.get("x-dump-compression") || effectiveSnapshotCompression;
       const disposition = response.headers.get("content-disposition") || "";
       const filename =
         /filename="([^"]+)"/.exec(disposition)?.[1] ||
@@ -675,13 +664,8 @@ export default function ProjectDetail() {
           ? {
               ...current,
               total,
-              originalSize,
-              compression,
               filename,
-              label:
-                compression === "none"
-                  ? "Downloading dump…"
-                  : "Downloading compressed dump…",
+              label: "Downloading dump…",
               percent: total ? 0 : null,
             }
           : current,
@@ -1650,7 +1634,7 @@ export default function ProjectDetail() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label="Snapshot compression"
-                  hint="Used by live snapshots and backup .dump downloads"
+                  hint="Used by live snapshots and scheduled backup dumps"
                 >
                   <Picker
                     value={snapshotMechanism}
@@ -1920,28 +1904,19 @@ export default function ProjectDetail() {
           <div className="space-y-4">
             <div className="space-y-2 rounded-xl border border-white/5 bg-ink-950/40 px-3 py-3 text-xs">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-slate-500">Compression</span>
-                <span className="truncate font-mono text-slate-200">
-                  {snapshotCompressionLabel(downloadProgress.compression)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
                 <span className="text-slate-500">File</span>
                 <span className="truncate font-mono text-slate-200">
                   {downloadProgress.filename || "…"}
                 </span>
               </div>
-              {downloadProgress.originalSize !== null ? (
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-slate-500">Size</span>
-                  <span className="truncate font-mono text-slate-200">
-                    {formatBytes(downloadProgress.originalSize)}
-                    {downloadProgress.total
-                      ? ` → ${formatBytes(downloadProgress.total)}`
-                      : ""}
-                  </span>
-                </div>
-              ) : null}
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-500">Size</span>
+                <span className="truncate font-mono text-slate-200">
+                  {downloadProgress.total
+                    ? formatBytes(downloadProgress.total)
+                    : "…"}
+                </span>
+              </div>
             </div>
             <div>
               <div className="flex items-center justify-between gap-3 text-xs">
@@ -2001,12 +1976,6 @@ export default function ProjectDetail() {
             </div>
             {downloadProgress.error ? (
               <ErrorBox message={downloadProgress.error} />
-            ) : null}
-            {downloadProgress.compression !== "none" ? (
-              <p className="text-[11px] text-slate-500">
-                The file is compressed. Decompress it before running{" "}
-                <span className="font-mono">pg_restore</span>.
-              </p>
             ) : null}
             <div className="flex justify-end gap-2">
               {downloadProgress.running ? (

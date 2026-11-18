@@ -21,7 +21,7 @@ DeltaPostgres is a self-hosted dashboard that finds the PostgreSQL containers on
 
 ## Why DeltaPostgres
 
-- **Full dumps at incremental cost.** Dumps are written uncompressed (`pg_dump -Fc -Z 0`) so Borg can deduplicate them, then Borg compresses once with zstd. Unchanged tables cost almost nothing.
+- **Full dumps at incremental cost.** Each database is dumped in PostgreSQL's custom format with the configured compression (`none` by default). Compression is inside the archive, so every `databases/<name>.dump` is restorable as-is, and Borg still deduplicates unchanged data and compresses the repository.
 - **Zero-config discovery.** Every Docker Compose project on each connected host is scanned. Projects that contain PostgreSQL are added automatically with their databases and `POSTGRES_USER`.
 - **One encrypted repository per project.** Each project gets its own `repokey-blake2` Borg repo, its own schedule and its own retention.
 - **Safe restores by default.** Restores go into a new scratch database. Overwriting a live database requires typing its name.
@@ -34,14 +34,14 @@ DeltaPostgres is a self-hosted dashboard that finds the PostgreSQL containers on
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="assets/readme/how-it-works-light.svg">
-  <img alt="Backup pipeline: 1 dump databases with pg_dumpall -g and pg_dump -Fc -Z 0; 2 stage globals.sql, one dump per database and manifest.json; 3 borg create with zstd and repokey-blake2; 4 borg prune and borg compact" src="assets/readme/how-it-works-dark.svg" width="100%">
+  <img alt="Backup pipeline: 1 dump databases with pg_dumpall -g and pg_dump -Fc --compress; 2 stage globals.sql, one dump per database and manifest.json; 3 borg create with zstd and repokey-blake2; 4 borg prune and borg compact" src="assets/readme/how-it-works-dark.svg" width="100%">
 </picture>
 
 For each run the dashboard executes inside the target container:
 
 ```bash
 pg_dumpall -U <user> --globals-only
-pg_dump    -U <user> -Fc -Z 0 -d <database>     # one per selected database
+pg_dump    -U <user> -Fc --compress=<method> -d <database>   # one per selected database
 ```
 
 It writes a manifest, then creates one Borg archive and applies retention:
@@ -173,9 +173,9 @@ The dump is extracted from Borg and restored with `pg_restore` (or `psql` for pl
 
 All transfers are per project and use PostgreSQL custom-format `.dump` files.
 
-- **Take current snapshot** (project header) runs a live `pg_dump -Fc` of the project's default database and downloads it. Nothing is stored. Compression comes from the project's **Snapshot compression** setting (global default: `none`), with `none`, `gzip`, `lz4` and `zstd` available. The same setting compresses backup downloads (`.dump.gz` / `.dump.zst` / `.dump.lz4`).
+- **Take current snapshot** (project header) runs a live `pg_dump -Fc` of the project's default database and downloads it. Nothing is stored. Compression comes from the project's **Snapshot compression** setting (global default: `none`), with `none`, `gzip`, `lz4` and `zstd` available. The same setting is used when scheduled backups dump each database, so archive members are compressed inside the custom format.
 - **Import dump file** (`+` in the **Backups** tab) accepts a single `.dump` file, validates the `PGDMP` header, and adds it to the project's **Backups** list. The exact filename is kept as the backup label. Nothing is restored automatically; restore it from the **Restore** tab like any other backup.
-- **Download** on a backup row extracts the selected `databases/<name>.dump` and downloads it. If an archive contains multiple database dumps, a picker lists each `.dump`. Downloads use the project's **Snapshot compression** setting (global default `none`), so `gzip`, `lz4` and `zstd` produce a `.dump.gz`, `.dump.lz4` or `.dump.zst` file — decompress it before `pg_restore`.
+- **Download** on a backup row extracts the selected `databases/<name>.dump` and downloads it. If an archive contains multiple database dumps, a picker lists each `.dump`. The file is a standard custom-format `.dump` — any compression is inside the PostgreSQL archive — so `pg_restore` reads it directly. Archives created before the compression setting was applied may still contain uncompressed dumps.
 - Imported rows show an **imported** pill. Use the pen icon on a backup row to rename its label inline; the internal Borg archive name stays stable.
 
 A Borg archive is one backup run: it contains `globals.sql`, `manifest.json`, and one `databases/<name>.dump` per selected database. Projects that back up a single database therefore have exactly one `.dump` per archive. If the project's **Databases** setting lists multiple databases, the archive contains one `.dump` per database.

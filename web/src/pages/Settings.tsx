@@ -364,7 +364,7 @@ export default function Settings() {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
                 label="Snapshot compression"
-                hint="Default for live snapshots and backup .dump downloads"
+                hint="Default for live snapshots and scheduled backup dumps"
               >
                 <Picker
                   value={snapshotMechanism}

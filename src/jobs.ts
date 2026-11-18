@@ -26,6 +26,11 @@ import {
 } from "./borg";
 import { getServer } from "./servers";
 import {
+  parseSnapshotCompression,
+  resolveSnapshotCompression,
+  snapshotCompressionArgs,
+} from "./compression";
+import {
   ensureDir,
   rmrf,
   hashFile,
@@ -271,6 +276,32 @@ async function executeBackupSteps(
   const version = await postgresVersion(container.id, pgUser, server);
   log(`Server version: ${version || "unknown"}`);
 
+  // Custom-format dumps carry their own compression, so an archive member is
+  // always a valid .dump that pg_restore can read directly.
+  const settingsForCompression = await getSettings();
+  const configuredCompression = resolveSnapshotCompression(
+    project.snapshot_compression,
+    typeof settingsForCompression.defaultSnapshotCompression === "string"
+      ? settingsForCompression.defaultSnapshotCompression
+      : null,
+    config.defaultSnapshotCompression,
+  );
+  const requestedCompression = parseSnapshotCompression(configuredCompression);
+  const majorVersion = Number.parseInt(version, 10);
+  let dumpCompression = configuredCompression;
+  if (
+    requestedCompression &&
+    (requestedCompression.method === "zstd" || requestedCompression.method === "lz4") &&
+    (!Number.isFinite(majorVersion) || majorVersion < 16)
+  ) {
+    dumpCompression = "gzip:6";
+    log(
+      `pg_dump ${version || "(unknown version)"} does not support ${requestedCompression.method}; using gzip:6 for this backup`,
+    );
+  }
+  const dumpCompressionArgs = snapshotCompressionArgs(dumpCompression);
+  log(`Dump compression: ${dumpCompression}`);
+
   const staging = path.join(config.stagingRoot, `job-${job.id}`);
   rmrf(staging);
   ensureDir(path.join(staging, "databases"));
@@ -302,7 +333,7 @@ async function executeBackupSteps(
       checkCanceled(job.id);
       const safeName = db.replace(/[^a-zA-Z0-9_.-]/g, "_");
       const dumpFile = path.join(staging, "databases", `${safeName}.dump`);
-      log(`Dumping database ${db}`);
+      log(`Dumping database ${db} (${dumpCompression})`);
       const started = Date.now();
       const dump = await execToFile(
         container.id,
@@ -311,8 +342,7 @@ async function executeBackupSteps(
           "-U",
           pgUser,
           "-Fc",
-          "-Z",
-          "0",
+          ...dumpCompressionArgs,
           // Never hold ACCESS SHARE locks behind a waiting DDL statement.
           "--lock-wait-timeout=30s",
           "-d",
