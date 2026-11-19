@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Check,
   Database,
   EyeOff,
   Loader2,
@@ -18,7 +17,6 @@ import {
 } from "lucide-react";
 import { api, formatBytes, fmtDate, timeAgo } from "../api";
 import type {
-  ContainerOption,
   DiscoveredProject,
   DiscoveryResponse,
   DockerServer,
@@ -29,7 +27,6 @@ import {
   Button,
   Card,
   CardHeader,
-  Checkbox,
   EmptyState,
   ErrorBox,
   Field,
@@ -42,25 +39,9 @@ import {
   cn,
   useDelayedUnmount,
 } from "../components/ui";
-import CronField from "../components/CronField";
 import Picker from "../components/Picker";
 import Tooltip from "../components/Tooltip";
 import ConfirmModal from "../components/ConfirmModal";
-
-interface AddPayload {
-  name: string;
-  serverId: number;
-  containerId?: string;
-  containerName?: string;
-  pgUser?: string;
-  databases?: string[] | null;
-  scheduleCron?: string | null;
-  keepDaily?: number | null;
-  keepWeekly?: number | null;
-  keepMonthly?: number | null;
-  notes?: string | null;
-  force?: boolean;
-}
 
 function discoveryIgnoreKey(project: DiscoveredProject): string {
   return project.composeProject || project.containers[0]?.name || project.key;
@@ -69,127 +50,27 @@ function discoveryIgnoreKey(project: DiscoveredProject): string {
 function AddProjectModal({
   open,
   onClose,
-  servers,
   defaultServerId,
   prefill,
 }: {
   open: boolean;
   onClose: () => void;
-  servers: DockerServer[];
   defaultServerId?: number;
   prefill?: DiscoveredProject | null;
 }) {
   const queryClient = useQueryClient();
-  const initialContainer =
-    prefill?.containers?.find((c) => c.state === "running") || prefill?.containers?.[0];
-  const [serverId, setServerId] = useState<number>(
-    prefill?.serverId || defaultServerId || servers[0]?.id || 0,
-  );
-  const [name, setName] = useState(prefill?.name || "");
-  const [containerName, setContainerName] = useState(initialContainer?.name || "");
-  const [pgUser, setPgUser] = useState(initialContainer?.pgUser || "");
-  const [databases, setDatabases] = useState<string[]>(
-    prefill?.databases?.length ? prefill.databases : [],
-  );
-  const [scheduleCron, setScheduleCron] = useState("");
-  const [keepDaily, setKeepDaily] = useState("");
-  const [keepWeekly, setKeepWeekly] = useState("");
-  const [keepMonthly, setKeepMonthly] = useState("");
-  const [notes, setNotes] = useState("");
-  const [force, setForce] = useState(false);
+  const [path, setPath] = useState(prefill?.workingDir || "");
   const [error, setError] = useState("");
-
-  const containersQuery = useQuery({
-    queryKey: ["containers", serverId],
-    queryFn: () =>
-      api<{ containers: ContainerOption[] }>(`/containers?serverId=${serverId}`),
-    enabled: serverId > 0,
-  });
-  const containers = containersQuery.data?.containers || [];
-
-  const [inspect, setInspect] = useState<{
-    isPostgres: boolean;
-    pgUser: string;
-    databases: Array<{ name: string; sizeBytes: number }>;
-    pgVersion: string;
-    state: string;
-    error?: string;
-  } | null>(null);
-
-  const inspectMutation = useMutation({
-    mutationFn: (container: string) =>
-      api<{
-        isPostgres: boolean;
-        pgUser: string;
-        databases: Array<{ name: string; sizeBytes: number }>;
-        pgVersion: string;
-        error?: string;
-        container: { state: string };
-      }>("/projects/inspect", {
-        method: "POST",
-        body: JSON.stringify({ container, serverId }),
-      }),
-    onSuccess: (data) => {
-      setInspect({
-        isPostgres: data.isPostgres,
-        pgUser: data.pgUser,
-        databases: data.databases,
-        pgVersion: data.pgVersion,
-        state: data.container.state,
-        error: data.error,
-      });
-      if (data.pgUser) setPgUser(data.pgUser);
-      if (databases.length === 0) setDatabases(data.databases.map((db) => db.name));
-      if (!name) {
-        const option = containers.find((c) => c.name === containerName);
-        setName(option?.composeProject || option?.name || "");
-      }
-    },
-    onError: (err) => setError(err instanceof Error ? err.message : "Unable to inspect container"),
-  });
 
   React.useEffect(() => {
     if (!open) return;
     setError("");
-    if (prefill) {
-      const container =
-        prefill.containers.find((c) => c.state === "running") || prefill.containers[0];
-      setServerId(prefill.serverId);
-      setName(prefill.name);
-      setContainerName(container?.name || "");
-      setPgUser(container?.pgUser || "");
-      setDatabases(prefill.databases);
-      if (container?.name) inspectMutation.mutate(container.name);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setPath(prefill?.workingDir || "");
   }, [open, prefill]);
 
-  const onServerChange = (value: string) => {
-    const id = Number(value);
-    setServerId(id);
-    setContainerName("");
-    setInspect(null);
-    setDatabases([]);
-    setError("");
-    if (!prefill || prefill.serverId !== id) setName("");
-  };
-
-  const onContainerChange = (value: string) => {
-    setContainerName(value);
-    setError("");
-    setInspect(null);
-    setDatabases([]);
-    const option = containers.find((c) => c.name === value);
-    if (option) {
-      setPgUser(option.pgUser);
-      if (!name) setName(option.composeProject || option.name);
-    }
-    if (value) inspectMutation.mutate(value);
-  };
-
   const create = useMutation({
-    mutationFn: (payload: AddPayload) =>
-      api<{ project: Project }>("/projects", {
+    mutationFn: (payload: { path: string; serverId?: number }) =>
+      api<{ project: Project }>("/projects/from-compose", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
@@ -205,237 +86,28 @@ function AddProjectModal({
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
-    const option = containers.find((c) => c.name === containerName);
-    create.mutate({
-      name,
-      serverId,
-      containerName,
-      containerId: option?.id,
-      pgUser: pgUser || undefined,
-      databases: databases.length > 0 ? databases : null,
-      scheduleCron: scheduleCron || null,
-      keepDaily: keepDaily === "" ? null : Number(keepDaily),
-      keepWeekly: keepWeekly === "" ? null : Number(keepWeekly),
-      keepMonthly: keepMonthly === "" ? null : Number(keepMonthly),
-      notes: notes || null,
-      force,
-    });
+    create.mutate({ path: path.trim(), serverId: prefill?.serverId || defaultServerId });
   };
-
-  const inputDatabases = inspect?.databases || [];
-  const selectedAll = inputDatabases.length > 0 && databases.length === inputDatabases.length;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={prefill ? `Add ${prefill.name}` : "Add a project"}
-      subtitle="A project maps a PostgreSQL container to a dedicated Borg repository."
-      wide
+      subtitle="Point at a Docker Compose file. Its PostgreSQL container is detected and backed up with the global settings."
     >
       <form onSubmit={submit} className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Project name">
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="my-service"
-              required
-            />
-          </Field>
-          <Field label="Docker server" hint={prefill ? "Detected project server" : "Scope this project"}>
-            <Picker
-              value={String(serverId)}
-              onChange={onServerChange}
-              options={servers.map((server) => ({
-                value: String(server.id),
-                label: server.name,
-                description:
-                  server.type === "local"
-                    ? "Local Docker socket"
-                    : `${server.protocol}://${server.host}:${server.port}`,
-                icon: <Server className="h-4 w-4" />,
-              }))}
-              placeholder="Select a server…"
-              searchable
-              disabled={Boolean(prefill)}
-              ariaLabel="Docker server"
-            />
-          </Field>
-          <Field label="Docker container" hint="Detected from the selected server">
-            <Picker
-              value={containerName}
-              onChange={onContainerChange}
-              options={containers.map((container) => ({
-                value: container.name,
-                label: container.name,
-                description: `${container.state}${container.isPostgres ? "" : " · non-postgres"}`,
-                icon: <Database className="h-4 w-4" />,
-              }))}
-              placeholder="Select a container…"
-              searchable
-              ariaLabel="Docker container"
-            />
-          </Field>
-        </div>
-        {containersQuery.isLoading ? (
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Loading containers from server…
-          </div>
-        ) : null}
-
-        {inspectMutation.isPending ? (
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Inspecting container…
-          </div>
-        ) : null}
-
-        {inspect && !inspect.isPostgres ? (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            <ShieldQuestion className="mt-0.5 h-4 w-4" />
-            <div>
-              This container does not look like PostgreSQL. You can still add it, but the backup
-              will fail unless it contains pg_dump tools.
-              <Checkbox
-                checked={force}
-                onChange={setForce}
-                label="Add anyway"
-                description="This container does not look like PostgreSQL."
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {inspect?.error ? <ErrorBox message={inspect.error} /> : null}
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="PostgreSQL user">
-            <Input
-              value={pgUser}
-              onChange={(event) => setPgUser(event.target.value)}
-              placeholder="postgres"
-            />
-          </Field>
-          <Field label="Server version">
-            <Input value={inspect?.pgVersion || "detected automatically"} readOnly />
-          </Field>
-        </div>
-
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <label className="label mb-0">Databases</label>
-            {inputDatabases.length > 0 ? (
-              <button
-                type="button"
-                className="text-[11px] text-accent-300 hover:text-accent-200"
-                onClick={() =>
-                  setDatabases(selectedAll ? [] : inputDatabases.map((db) => db.name))
-                }
-              >
-                {selectedAll ? "Clear" : "Select all"}
-              </button>
-            ) : null}
-          </div>
-          {inputDatabases.length === 0 ? (
-            <p className="rounded-lg border border-white/5 bg-ink-950/50 px-3 py-2 text-xs text-slate-500">
-              Select a running PostgreSQL container to list databases. Leave empty to back up all
-              databases dynamically.
-            </p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {inputDatabases.map((db) => (
-                <label
-                  key={db.name}
-                  className={cn(
-                    "flex cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs transition",
-                    databases.includes(db.name)
-                      ? "border-accent-500/30 bg-accent-500/10 text-accent-100"
-                      : "border-white/5 bg-ink-950/40 text-slate-400 hover:border-white/10",
-                  )}
-                >
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "flex h-4 w-4 items-center justify-center rounded border transition",
-                        databases.includes(db.name)
-                          ? "border-accent-500 bg-accent-500"
-                          : "border-white/15 bg-ink-950/60",
-                      )}
-                    >
-                      <Check
-                        className={cn(
-                          "h-3 w-3 text-ink-950 transition",
-                          databases.includes(db.name) ? "opacity-100" : "opacity-0",
-                        )}
-                        strokeWidth={3}
-                      />
-                    </span>
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={databases.includes(db.name)}
-                      onChange={(event) =>
-                        setDatabases((current) =>
-                          event.target.checked
-                            ? [...current, db.name]
-                            : current.filter((name) => name !== db.name),
-                        )
-                      }
-                    />
-                    <span className="font-mono">{db.name}</span>
-                  </span>
-                  <span className="text-slate-500">{formatBytes(db.sizeBytes)}</span>
-                </label>
-              ))}
-            </div>
-          )}
-          <p className="mt-1.5 text-[11px] text-slate-500">
-            Leave all selected to include future databases automatically.
-          </p>
-        </div>
-
-        <CronField
-          value={scheduleCron}
-          onChange={setScheduleCron}
-          allowInherit
-          hint="Leave inherited to use the global schedule."
-        />
-
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Keep daily" hint="Empty = global">
-            <Input
-              type="number"
-              min={0}
-              value={keepDaily}
-              onChange={(event) => setKeepDaily(event.target.value)}
-              placeholder="7"
-            />
-          </Field>
-          <Field label="Keep weekly" hint="Empty = global">
-            <Input
-              type="number"
-              min={0}
-              value={keepWeekly}
-              onChange={(event) => setKeepWeekly(event.target.value)}
-              placeholder="4"
-            />
-          </Field>
-          <Field label="Keep monthly" hint="Empty = global">
-            <Input
-              type="number"
-              min={0}
-              value={keepMonthly}
-              onChange={(event) => setKeepMonthly(event.target.value)}
-              placeholder="6"
-            />
-          </Field>
-        </div>
-
-        <Field label="Notes">
+        <Field
+          label="Docker Compose file"
+          hint="Absolute path on the Docker host, to the compose file or its directory"
+        >
           <Input
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            placeholder="Optional context for this project"
+            value={path}
+            onChange={(event) => setPath(event.target.value)}
+            placeholder="/opt/my-service/docker-compose.yml"
+            className="font-mono"
+            autoFocus
+            required
           />
         </Field>
 
@@ -445,7 +117,7 @@ function AddProjectModal({
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={create.isPending} disabled={!name || !containerName || !serverId}>
+          <Button type="submit" variant="primary" loading={create.isPending} disabled={!path.trim()}>
             <Plus className="h-4 w-4" /> Add project
           </Button>
         </div>
@@ -1172,7 +844,6 @@ export default function Projects() {
             setAddOpen(false);
             setPrefill(null);
           }}
-          servers={servers}
           defaultServerId={serverFilter !== "all" ? Number(serverFilter) : undefined}
           prefill={prefill}
         />

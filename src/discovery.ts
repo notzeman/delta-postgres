@@ -261,3 +261,107 @@ export async function composeProjectSummary(
     withPostgres: projects.filter((project) => project.hasPostgres).length,
   };
 }
+
+const COMPOSE_FILE_RE = /^(docker-)?compose(\.[\w-]+)?\.ya?ml$/i;
+
+function normalizeComposePath(input: string): string {
+  const trimmed = input.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  return trimmed.length > 1 ? trimmed.replace(/\/+$/, "") : trimmed;
+}
+
+/**
+ * Whether a container was started from the compose file or directory at `target`.
+ * Docker Compose stamps every container with the project's working directory and
+ * the config files it was started from, so this works for local and remote hosts
+ * without reading the remote filesystem.
+ */
+export function containerMatchesComposePath(container: ContainerInfo, target: string): boolean {
+  const wanted = normalizeComposePath(target);
+  if (!wanted) return false;
+  const workingDir = container.workingDir ? normalizeComposePath(container.workingDir) : null;
+  const configFiles = String(container.labels["com.docker.compose.project.config_files"] || "")
+    .split(",")
+    .map((file) => file.trim())
+    .filter(Boolean)
+    .map((file) =>
+      normalizeComposePath(file.startsWith("/") || !workingDir ? file : `${workingDir}/${file}`),
+    );
+  if (configFiles.includes(wanted)) return true;
+  if (workingDir === wanted) return true;
+  // A compose file path whose labels were not recorded: match on its directory.
+  const slash = wanted.lastIndexOf("/");
+  const base = wanted.slice(slash + 1);
+  if (workingDir && COMPOSE_FILE_RE.test(base) && configFiles.length === 0) {
+    return normalizeComposePath(wanted.slice(0, slash) || "/") === workingDir;
+  }
+  return false;
+}
+
+export class ComposeLookupError extends Error {
+  constructor(public statusCode: number, message: string) {
+    super(message);
+    this.name = "ComposeLookupError";
+  }
+}
+
+/**
+ * Find the PostgreSQL compose project started from `composePath` on the given servers.
+ * Throws ComposeLookupError when nothing (or more than one server) matches.
+ */
+export async function findComposeProjectByPath(
+  composePath: string,
+  servers: ServerRow[],
+): Promise<DiscoveredProject> {
+  const target = normalizeComposePath(composePath);
+  if (!target.startsWith("/")) {
+    throw new ComposeLookupError(400, "Enter the absolute path to the docker-compose file on the Docker host");
+  }
+
+  const matches: Array<{ server: ServerRow; containers: ContainerInfo[]; composeProject: string }> = [];
+  for (const server of servers) {
+    let containers: ContainerInfo[];
+    try {
+      containers = await cachedContainers(server, { fresh: true });
+    } catch {
+      continue;
+    }
+    const composeNames = new Set(
+      containers
+        .filter((c) => c.composeProject && containerMatchesComposePath(c, target))
+        .map((c) => c.composeProject as string),
+    );
+    for (const composeProject of composeNames) matches.push({ server, containers, composeProject });
+  }
+
+  if (matches.length === 0) {
+    throw new ComposeLookupError(
+      404,
+      `No Docker Compose project found at ${target}. Check the path and make sure the stack has been started with "docker compose up".`,
+    );
+  }
+
+  const found: DiscoveredProject[] = [];
+  const withoutPostgres: string[] = [];
+  for (const match of matches) {
+    const discovered = await discoverProjects(match.server, match.containers, { fresh: true });
+    const project = discovered.find((p) => p.composeProject === match.composeProject);
+    if (project) found.push(project);
+    else withoutPostgres.push(`${match.composeProject} (${match.server.name})`);
+  }
+
+  if (found.length === 0) {
+    throw new ComposeLookupError(
+      400,
+      `Compose project ${withoutPostgres.join(", ")} has no PostgreSQL container to back up.`,
+    );
+  }
+  if (found.length > 1) {
+    throw new ComposeLookupError(
+      409,
+      `The compose path matches several projects: ${found
+        .map((p) => `${p.name} on ${p.serverName}`)
+        .join(", ")}. Filter the Projects page by server and try again.`,
+    );
+  }
+  return found[0];
+}

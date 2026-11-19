@@ -36,7 +36,13 @@ import {
   execStream,
   PG_READ_ONLY_ENV,
 } from "./docker";
-import { discoverProjects, inspectForManualAdd, composeProjectSummary } from "./discovery";
+import {
+  discoverProjects,
+  inspectForManualAdd,
+  composeProjectSummary,
+  findComposeProjectByPath,
+  ComposeLookupError,
+} from "./discovery";
 import { cachedContainers, cachedPgInfo, forgetServer } from "./containerCache";
 import { autoImportDiscoveredProjects } from "./autoDiscover";
 import { resolveProjectContainer } from "./containerResolver";
@@ -937,6 +943,92 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       await pool.query(
         `DELETE FROM ignored_projects WHERE server_id = $1 AND compose_project = $2`,
         [server.id, key],
+      );
+    }
+    const created = await getProject(rows[0].id);
+    return reply.code(201).send({ project: created || rows[0] });
+  });
+
+  /**
+   * One-field add: locate the compose project started from a compose file path,
+   * pick its PostgreSQL container and create the project with global settings.
+   */
+  app.post("/api/projects/from-compose", async (request, reply) => {
+    const body = z
+      .object({
+        path: z.string().trim().min(1).max(1024),
+        serverId: z.number().int().positive().optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) return sendError(reply, 400, "The path to a docker-compose file is required");
+
+    let servers = await listServers();
+    servers = body.data.serverId
+      ? servers.filter((server) => server.id === body.data.serverId)
+      : servers.filter((server) => server.enabled);
+    if (servers.length === 0) return sendError(reply, 404, "Docker server not found");
+
+    let item;
+    try {
+      item = await findComposeProjectByPath(body.data.path, servers);
+    } catch (error) {
+      if (error instanceof ComposeLookupError) return sendError(reply, error.statusCode, error.message);
+      throw error;
+    }
+
+    if (item.managedProjectId) {
+      const existing = await getProject(item.managedProjectId);
+      return sendError(
+        reply,
+        409,
+        `${item.name} on ${item.serverName} is already managed as "${existing?.name || item.name}"`,
+      );
+    }
+
+    const primary = item.containers.find((c) => c.state === "running") || item.containers[0];
+    const settings = await getSettings();
+    const timezone = String(settings.timezone || config.timezone);
+    const cron = String(settings.globalCron || config.defaultCron);
+
+    let slug = slugify(item.name);
+    if (await getProjectBySlug(slug, item.serverId)) {
+      slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+    }
+
+    // Schedule, retention and compression stay NULL so the project follows the
+    // global settings; databases NULL backs up the container's primary database.
+    const { rows } = await pool.query<Project>(
+      `INSERT INTO projects(name, slug, source, enabled, server_id, container_id,
+        container_name, container_image, compose_project, pg_user, pg_default_db,
+        databases, schedule_cron, notes, next_run_at)
+       VALUES($1,$2,'manual',$3,$4,$5,$6,$7,$8,$9,$10,NULL,NULL,$11,$12)
+       RETURNING *`,
+      [
+        item.name,
+        slug,
+        item.containers.some((c) => c.state === "running"),
+        item.serverId,
+        primary.id,
+        primary.name,
+        primary.image,
+        item.composeProject,
+        primary.pgUser,
+        primary.pgDefaultDb,
+        `Added from ${body.data.path}`,
+        computeNextRun(cron, new Date(), timezone),
+      ],
+    );
+    await audit(getActor(request), "project.create", rows[0].slug, {
+      container: primary.name,
+      composeProject: item.composeProject,
+      composePath: body.data.path,
+      server: item.serverName,
+    });
+    // Adding by hand overrides a previous "ignore" decision.
+    for (const key of [item.composeProject, primary.name].filter(Boolean)) {
+      await pool.query(
+        `DELETE FROM ignored_projects WHERE server_id = $1 AND compose_project = $2`,
+        [item.serverId, key],
       );
     }
     const created = await getProject(rows[0].id);

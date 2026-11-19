@@ -114,10 +114,10 @@ curl -s http://127.0.0.1:8095/api/health | jq
 ### Projects and discovery
 
 - New Compose projects are picked up on startup, every five minutes, and whenever you choose **Rescan**.
-- Auto-discovery only considers containers with a Compose project label (`com.docker.compose.project`). Standalone `docker run` PostgreSQL containers are never auto-added; onboard them with **Add project** if needed.
+- Auto-discovery only considers containers with a Compose project label (`com.docker.compose.project`). Standalone `docker run` PostgreSQL containers are never auto-added; create them through `POST /api/projects` with a container name if needed.
 - Opening **Managed** doesn't trigger a scan. Discovery runs on **Rescan** or when you open **Detected** or **Ignored**.
 - Compose projects without PostgreSQL are listed under **Detected → Other Compose projects**.
-- **Add project** onboards a container the scan missed, with live detection of its databases and user.
+- **Add project** takes one field, the path to a `docker-compose.yml` (or its directory) on the Docker host. It finds the Compose project started from that path, picks its PostgreSQL container, user and primary database, and creates the project with the global schedule, retention and compression. It fails if no started Compose project matches the path or the project has no PostgreSQL container.
 - The trash button **moves a project to Ignored**. Its archives, jobs and Borg repo are kept, and later scans won't re-add it. Restore it from **Ignored**.
 - Projects with backups turned off appear under the **Disabled** tab. Use the power button on a project card, or the **Disabled (no backups)** schedule option, to toggle them.
 - Turn off auto-add in **Settings → Global defaults**.
@@ -365,6 +365,7 @@ docker-compose.yml   Dashboard + metadata Postgres
 | `POST` | `/api/servers/:id/test` | Test an existing server |
 | `POST` | `/api/servers/:id/scan` | Discover and auto-add projects on a server |
 | `GET/POST` | `/api/projects` | List or create projects (`?serverId=`) |
+| `POST` | `/api/projects/from-compose` | Create a project from a compose file path (`{ path, serverId? }`) |
 | `GET/PATCH/DELETE` | `/api/projects/:id` | Project details, update, remove |
 | `POST` | `/api/projects/:id/backup` | Queue a manual backup |
 | `POST` | `/api/backups` | Queue all enabled projects |
